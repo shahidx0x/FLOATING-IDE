@@ -8,6 +8,7 @@ import { localize, localize2 } from '../../../../nls.js';
 import { MultiWindowParts, Part } from '../../part.js';
 import { ITitleService } from '../../../services/title/browser/titleService.js';
 import { getWCOTitlebarAreaRect, getZoomFactor, isWCOEnabled } from '../../../../base/browser/browser.js';
+import { FlideBarHost, FLIDE_BAR_HEIGHT } from './flideBarHost.js';
 import { MenuBarVisibility, getTitleBarStyle, getMenuBarVisibility, hasCustomTitlebar, hasNativeTitlebar, DEFAULT_CUSTOM_TITLEBAR_HEIGHT, getWindowControlsStyle, WindowControlsStyle, TitlebarStyle, MenuSettings, hasNativeMenu } from '../../../../platform/window/common/window.js';
 import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
 import { StandardMouseEvent } from '../../../../base/browser/mouseEvent.js';
@@ -234,6 +235,9 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 	get minimumHeight(): number {
 		const wcoEnabled = isWeb && isWCOEnabled();
 		let value = this.isCommandCenterVisible || wcoEnabled ? DEFAULT_CUSTOM_TITLEBAR_HEIGHT : 30;
+		if (FlideBarHost.factory) {
+			value = FLIDE_BAR_HEIGHT; // FLIDE single bar
+		}
 		if (wcoEnabled) {
 			value = Math.max(value, getWCOTitlebarAreaRect(getWindow(this.element))?.height ?? 0);
 		}
@@ -471,6 +475,12 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 		this.leftContent = append(this.rootContainer, $('.titlebar-left'));
 		this.centerContent = append(this.rootContainer, $('.titlebar-center'));
 		this.rightContent = append(this.rootContainer, $('.titlebar-right'));
+
+		// FLIDE: one bar replaces the title bar contents
+		if (FlideBarHost.factory) {
+			this.rootContainer.classList.add('flide-chrome');
+			this._register(FlideBarHost.factory(this.instantiationService, this.rootContainer));
+		}
 
 		// App Icon (Windows, Linux)
 		if ((isWindows || isLinux) && !hasNativeTitlebar(this.configurationService, this.titleBarStyle)) {

@@ -1,0 +1,185 @@
+/*---------------------------------------------------------------------------------------------
+ *  FLIDE — Midnight look for the single bar, menu drawer and terminal sheet.
+ *--------------------------------------------------------------------------------------------*/
+
+.monaco-workbench {
+	--flide-accent: #7AA2FF;
+	--flide-accent-hover: #A9C2FF;
+	--flide-running: #FFB454;
+	--flide-ui-font: Geist, 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+	--flide-code-font: 'JetBrains Mono', Consolas, monospace;
+}
+
+/* ---- Title bar → FLIDE bar ---- */
+.monaco-workbench .part.titlebar {
+	background-color: #101216 !important;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.07) !important;
+}
+.monaco-workbench .part.titlebar > .titlebar-container.flide-chrome > .titlebar-left,
+.monaco-workbench .part.titlebar > .titlebar-container.flide-chrome > .titlebar-center,
+.monaco-workbench .part.titlebar > .titlebar-container.flide-chrome > .titlebar-right {
+	display: none !important;
+}
+
+.flide-bar {
+	position: absolute;
+	inset: 0;
+	z-index: 10;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 0 8px;
+	font-family: var(--flide-ui-font);
+	font-size: 13px;
+	color: #E6E8EE;
+	-webkit-app-region: drag;
+}
+.flide-bar button {
+	-webkit-app-region: no-drag;
+	height: 34px;
+	border: none;
+	border-radius: 8px;
+	background: transparent;
+	color: #9AA1AE;
+	font: inherit;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	transition: background-color .12s ease, color .12s ease;
+}
+.flide-bar button:hover { background: #1B1E25; color: #E6E8EE; }
+.flide-bar button:focus-visible { outline: 1px solid var(--flide-accent); outline-offset: -1px; }
+
+.flide-icon-btn { width: 34px; position: relative; flex-shrink: 0; }
+.flide-icon-btn .codicon { font-size: 16px; }
+.flide-bar .flide-icon-btn.is-active { background: #1F232C; color: var(--flide-accent); }
+
+.flide-file { gap: 8px; padding: 0 10px; min-width: 0; max-width: 55%; }
+.flide-file-name { color: #E6E8EE; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.flide-file-project { color: #7C8493; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.flide-chevron.codicon { font-size: 12px; color: #7C8493; }
+
+.flide-spacer { flex: 1; align-self: stretch; }
+
+.flide-bar .flide-run {
+	height: 30px;
+	padding: 0 14px;
+	gap: 7px;
+	border-radius: 7px;
+	background: var(--flide-accent);
+	color: #0E1014;
+	font-weight: 600;
+	font-size: 12.5px;
+	flex-shrink: 0;
+}
+.flide-bar .flide-run:hover { background: var(--flide-accent-hover); color: #0E1014; }
+.flide-run .codicon { font-size: 13px; }
+.flide-bar .flide-run.is-running {
+	background: rgba(255, 180, 84, 0.14);
+	color: var(--flide-running);
+	box-shadow: inset 0 0 0 1px rgba(255, 180, 84, 0.5);
+}
+.flide-bar .flide-run.is-running:hover { background: rgba(255, 180, 84, 0.22); color: var(--flide-running); }
+
+.flide-dot {
+	position: absolute;
+	top: 6px;
+	right: 6px;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--flide-running);
+	display: none;
+}
+.flide-icon-btn.has-dot .flide-dot { display: block; }
+
+.flide-divider { width: 1px; height: 18px; background: rgba(255, 255, 255, 0.1); margin: 0 2px; flex-shrink: 0; }
+
+/* ---- Menu drawer (slides in over the editor from the left) ---- */
+.monaco-workbench .flide-dim {
+	position: absolute;
+	left: 0; right: 0; top: 46px; bottom: 0;
+	z-index: 2500;
+	background: rgba(8, 10, 14, 0.55);
+	animation: flide-fade .15s ease-out;
+}
+.monaco-workbench .flide-drawer {
+	position: absolute;
+	left: 0; top: 46px; bottom: 0;
+	width: 300px;
+	max-width: 85%;
+	z-index: 2501;
+	display: flex;
+	flex-direction: column;
+	background: #111318;
+	border-right: 1px solid rgba(255, 255, 255, 0.08);
+	box-shadow: 16px 0 40px rgba(0, 0, 0, 0.4);
+	font-family: var(--flide-ui-font);
+	font-size: 13px;
+	color: #E6E8EE;
+	animation: flide-slide-in .18s cubic-bezier(.2, .8, .2, 1);
+}
+@keyframes flide-slide-in { from { transform: translateX(-24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes flide-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.flide-drawer button { font: inherit; cursor: pointer; }
+.flide-drawer .flide-icon-btn {
+	height: 32px; width: 32px; border: none; border-radius: 7px;
+	background: transparent; color: #9AA1AE;
+	display: flex; align-items: center; justify-content: center;
+}
+.flide-drawer .flide-icon-btn:hover { background: #1B1E25; color: #E6E8EE; }
+
+.flide-drawer-head { display: flex; align-items: center; gap: 6px; padding: 10px 10px 6px 8px; }
+.flide-search {
+	flex: 1; height: 34px;
+	display: flex; align-items: center; gap: 8px;
+	padding: 0 10px;
+	border-radius: 8px;
+	border: 1px solid rgba(255, 255, 255, 0.06);
+	background: #1B1E25;
+	color: #7C8493;
+	text-align: left;
+}
+.flide-search:hover { border-color: rgba(122, 162, 255, 0.5); color: #9AA1AE; }
+.flide-search .flide-kbd { margin-left: auto; }
+.flide-kbd {
+	font-family: var(--flide-code-font);
+	font-size: 11px;
+	padding: 2px 6px;
+	border-radius: 5px;
+	background: #1F232C;
+	color: #9AA1AE;
+	border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.flide-drawer-body { flex: 1; overflow-y: auto; padding: 2px 6px 8px; }
+.flide-section { padding: 14px 8px 6px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #7C8493; }
+
+.flide-item {
+	width: 100%; height: 30px;
+	display: flex; align-items: center; gap: 8px;
+	padding-right: 8px;
+	border: none; border-radius: 6px;
+	background: transparent;
+	color: #C9CDD6;
+	text-align: left;
+}
+.flide-item:hover { background: #1B1E25; color: #E6E8EE; }
+.flide-item.is-active { background: #1F232C; color: #E6E8EE; }
+.flide-item .codicon { font-size: 14px; color: #7C8493; flex-shrink: 0; }
+.flide-item.is-folder .codicon { font-size: 12px; }
+.flide-item-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.flide-item-detail { margin-left: auto; color: #7C8493; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+
+.flide-drawer-foot { border-top: 1px solid rgba(255, 255, 255, 0.06); padding: 6px; }
+.flide-version { padding: 8px 10px 4px; font-size: 11.5px; color: #5C6370; }
+
+/* ---- Terminal sheet (panel on the right) ---- */
+.monaco-workbench .part.panel {
+	box-shadow: -16px 0 40px rgba(0, 0, 0, 0.45);
+}
+.monaco-workbench .part.panel .terminal-wrapper {
+	padding-left: 6px;
+}

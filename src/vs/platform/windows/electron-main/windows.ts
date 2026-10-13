@@ -131,6 +131,9 @@ export interface IDefaultBrowserWindowOptionsOverrides {
 	backgroundColor?: string;
 }
 
+/** FLIDE draws its own window buttons in the single bar. */
+const FLIDE_OWN_WINDOW_BUTTONS = true;
+
 export function defaultBrowserWindowOptions(accessor: ServicesAccessor, windowState: IWindowState, overrides?: IDefaultBrowserWindowOptionsOverrides, webPreferences?: electron.WebPreferences): electron.BrowserWindowConstructorOptions & { experimentalDarkMode: boolean } {
 	const themeMainService = accessor.get(IThemeMainService);
 	const productService = accessor.get(IProductService);
@@ -213,7 +216,7 @@ export function defaultBrowserWindowOptions(accessor: ServicesAccessor, windowSt
 			options.frame = false;
 		}
 
-		if (useWindowControlsOverlay(configurationService)) {
+		if (useWindowControlsOverlay(configurationService) && !FLIDE_OWN_WINDOW_BUTTONS) {
 			if (isMacintosh) {
 				options.titleBarOverlay = true;
 			} else {

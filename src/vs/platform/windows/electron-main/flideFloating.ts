@@ -7,6 +7,7 @@ import electron from 'electron';
 import { Disposable, toDisposable } from '../../../base/common/lifecycle.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
 import { ILogService } from '../../log/common/log.js';
+import { validatedIpcMain } from '../../../base/parts/ipc/electron-main/ipcMain.js';
 
 export const FlideSettings = {
 	alwaysOnTop: 'flide.window.alwaysOnTop',
@@ -14,6 +15,7 @@ export const FlideSettings = {
 	ghostOpacity: 'flide.window.ghostOpacity',
 	hotkeyToggle: 'flide.hotkeys.toggleVisibility',
 	hotkeyGhost: 'flide.hotkeys.toggleGhost',
+	hotkeyBubble: 'flide.hotkeys.toggleBubble',
 } as const;
 
 const DEFAULTS = {
@@ -22,6 +24,7 @@ const DEFAULTS = {
 	ghostOpacity: 0.45,
 	hotkeyToggle: 'CommandOrControl+Shift+Space',
 	hotkeyGhost: 'CommandOrControl+Alt+G',
+	hotkeyBubble: 'CommandOrControl+Shift+M',
 };
 
 const instances = new Set<FlideFloatingWindow>();
@@ -102,6 +105,10 @@ namespace FlideHotkeys {
 	}
 
 	function toggleVisibility(): void {
+		if (FlideBubble.isActive()) {
+			FlideBubble.restore();
+			return;
+		}
 		const wins = liveWindows();
 		const anyVisible = wins.some(i => i.window.isVisible() && !i.window.isMinimized());
 		const anyFocused = wins.some(i => i.window.isFocused());
@@ -133,6 +140,7 @@ namespace FlideHotkeys {
 		const bindings: [string, () => void][] = [
 			[configurationService.getValue<string>(FlideSettings.hotkeyToggle) || DEFAULTS.hotkeyToggle, toggleVisibility],
 			[configurationService.getValue<string>(FlideSettings.hotkeyGhost) || DEFAULTS.hotkeyGhost, toggleGhost],
+			[configurationService.getValue<string>(FlideSettings.hotkeyBubble) || DEFAULTS.hotkeyBubble, () => FlideBubble.toggle(liveWindows().map(i => i.window))],
 		];
 
 		for (const [accelerator, handler] of bindings) {
@@ -150,6 +158,107 @@ namespace FlideHotkeys {
 		if (!quitHooked) {
 			quitHooked = true;
 			electron.app.on('will-quit', () => registered.forEach(a => electron.globalShortcut.unregister(a)));
+
+			// Buttons in the FLIDE bar
+			validatedIpcMain.on('vscode:flide-hide', event => electron.BrowserWindow.fromWebContents(event.sender)?.hide());
+			validatedIpcMain.on('vscode:flide-bubble', () => FlideBubble.show(liveWindows().map(i => i.window)));
+			validatedIpcMain.on('vscode:flide-running', (_event, running: boolean) => FlideBubble.setRunning(!!running));
+		}
+	}
+}
+
+/** Bubble mode: a small round orb at the screen edge. Click it to bring the window back; drag its rim to move it. */
+namespace FlideBubble {
+
+	let bubble: electron.BrowserWindow | undefined;
+	let hidden: electron.BrowserWindow[] = [];
+	let running = false;
+
+	const SIZE = 64;
+
+	function html(): string {
+		return `<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;width:100%;height:100%;background:transparent;overflow:hidden;user-select:none}
+.rim{position:fixed;inset:0;border-radius:50%;-webkit-app-region:drag}
+a{position:absolute;inset:8px;border-radius:50%;background:#14161B;border:1px solid rgba(255,255,255,.12);
+box-shadow:0 6px 18px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;color:#7AA2FF;
+font:500 17px 'JetBrains Mono',Consolas,monospace;text-decoration:none;-webkit-app-region:no-drag;cursor:pointer;transition:border-color .12s}
+a:hover{border-color:#7AA2FF}
+.dot{position:absolute;top:9px;right:9px;width:11px;height:11px;border-radius:50%;background:#FFB454;border:2px solid #14161B;display:none;pointer-events:none}
+body.running .dot{display:block}
+</style></head><body class="${running ? 'running' : ''}"><div class="rim"></div><a href="flide://open" title="Open FLIDE">{}</a><span class="dot"></span></body></html>`;
+	}
+
+	export function isActive(): boolean {
+		return !!bubble && !bubble.isDestroyed();
+	}
+
+	export function toggle(windows: electron.BrowserWindow[]): void {
+		if (isActive()) {
+			restore();
+		} else {
+			show(windows);
+		}
+	}
+
+	export function show(windows: electron.BrowserWindow[]): void {
+		if (isActive()) {
+			return;
+		}
+		const anchor = windows.find(w => w.isVisible()) ?? windows[0];
+		const display = anchor ? electron.screen.getDisplayMatching(anchor.getBounds()) : electron.screen.getPrimaryDisplay();
+		const area = display.workArea;
+
+		bubble = new electron.BrowserWindow({
+			width: SIZE,
+			height: SIZE,
+			x: area.x + area.width - SIZE - 16,
+			y: area.y + Math.round(area.height / 2 - SIZE / 2),
+			frame: false,
+			transparent: true,
+			resizable: false,
+			maximizable: false,
+			fullscreenable: false,
+			skipTaskbar: true,
+			hasShadow: false,
+			show: false,
+			webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
+		});
+		bubble.setAlwaysOnTop(true, 'screen-saver');
+		bubble.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+		bubble.webContents.on('will-navigate', (event, url) => {
+			event.preventDefault();
+			if (url.startsWith('flide://open')) {
+				restore();
+			}
+		});
+		bubble.on('closed', () => { bubble = undefined; });
+		bubble.once('ready-to-show', () => bubble?.showInactive());
+		bubble.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html()));
+
+		hidden = windows.filter(w => !w.isDestroyed() && w.isVisible());
+		for (const w of hidden) {
+			w.hide();
+		}
+	}
+
+	export function restore(): void {
+		if (bubble && !bubble.isDestroyed()) {
+			bubble.destroy();
+		}
+		bubble = undefined;
+		const targets = hidden.filter(w => !w.isDestroyed());
+		hidden = [];
+		for (const w of (targets.length ? targets : [...instances].map(i => i.window).filter(w => !w.isDestroyed()))) {
+			w.show();
+			w.focus();
+		}
+	}
+
+	export function setRunning(value: boolean): void {
+		running = value;
+		if (bubble && !bubble.isDestroyed()) {
+			bubble.webContents.executeJavaScript(`document.body.classList.toggle('running', ${value ? 'true' : 'false'})`).catch(() => undefined);
 		}
 	}
 }

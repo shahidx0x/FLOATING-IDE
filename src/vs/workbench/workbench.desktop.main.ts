@@ -219,6 +219,9 @@ import './contrib/keybindingsExport/electron-browser/keybindingsExport.contribut
 // System-wide (OS global) Keybindings
 import './contrib/keybindings/electron-browser/systemWideKeybindings.contribution.js';
 
+// FLIDE
+import './contrib/flide/electron-browser/flide.contribution.js';
+
 //#endregion
 
 

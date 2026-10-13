@@ -49,8 +49,11 @@ configurationRegistry.registerDefaultConfigurations([{
 		'editor.scrollbar.verticalScrollbarSize': 8,
 		'editor.scrollbar.horizontalScrollbarSize': 8,
 		'terminal.integrated.tabs.enabled': false,
-		'terminal.integrated.fontFamily': '\'JetBrains Mono\', Consolas, monospace',
-		'terminal.integrated.fontSize': 12.5,
+		'terminal.integrated.fontFamily': '\'Ubuntu Mono\', \'Symbols Nerd Font Mono\', Consolas, monospace',
+		'terminal.integrated.fontSize': 15,
+		'terminal.integrated.lineHeight': 1.15,
+		'terminal.integrated.fontWeight': 'normal',
+		'terminal.integrated.fontWeightBold': 'bold',
 	}
 }]);
 

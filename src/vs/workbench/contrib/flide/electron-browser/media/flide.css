@@ -1,3 +1,39 @@
+/* Ubuntu Mono — default terminal font (Ubuntu Font Licence 1.0, media/fonts/UFL.txt) */
+/* Symbols Nerd Font Mono — icon fallback for prompt glyphs (MIT, media/fonts/NerdFontsSymbols-LICENSE.txt) */
+@font-face {
+	font-family: 'Symbols Nerd Font Mono';
+	src: local('Symbols Nerd Font Mono'), url('./fonts/SymbolsNerdFontMono-Regular.ttf') format('truetype');
+	font-display: block;
+}
+@font-face {
+	font-family: 'Ubuntu Mono';
+	src: local('Ubuntu Mono'), url('./fonts/UbuntuMono-Regular.ttf') format('truetype');
+	font-weight: normal;
+	font-style: normal;
+	font-display: block;
+}
+@font-face {
+	font-family: 'Ubuntu Mono';
+	src: local('Ubuntu Mono Bold'), url('./fonts/UbuntuMono-Bold.ttf') format('truetype');
+	font-weight: bold;
+	font-style: normal;
+	font-display: block;
+}
+@font-face {
+	font-family: 'Ubuntu Mono';
+	src: local('Ubuntu Mono Italic'), url('./fonts/UbuntuMono-Italic.ttf') format('truetype');
+	font-weight: normal;
+	font-style: italic;
+	font-display: block;
+}
+@font-face {
+	font-family: 'Ubuntu Mono';
+	src: local('Ubuntu Mono Bold Italic'), url('./fonts/UbuntuMono-BoldItalic.ttf') format('truetype');
+	font-weight: bold;
+	font-style: italic;
+	font-display: block;
+}
+
 /*---------------------------------------------------------------------------------------------
  *  FLIDE — Midnight look for the single bar, menu drawer and terminal sheet.
  *--------------------------------------------------------------------------------------------*/

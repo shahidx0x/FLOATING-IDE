@@ -1,7 +1,7 @@
 {
 	"nameShort": "FLIDE",
 	"nameLong": "FLIDE - Floating IDE",
-	"applicationName": "flide",
+	"applicationName": "fld",
 	"dataFolderName": ".flide",
 	"sharedDataFolderName": ".flide-shared",
 	"win32MutexName": "flide",

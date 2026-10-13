@@ -105,6 +105,30 @@ registerAction2(class extends Action2 {
 registerAction2(class extends Action2 {
 	constructor() {
 		super({
+			id: 'flide.searchInFiles',
+			title: localize2('flide.searchInFiles', 'FLIDE: Search in Files'),
+			f1: true,
+			keybinding: { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyF, weight: KeybindingWeight.ExternalExtension + 1 }
+		});
+	}
+	run(): void { FlideBar.current?.openSearch('text'); }
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'flide.goToFile',
+			title: localize2('flide.goToFile', 'FLIDE: Go to File'),
+			f1: true,
+			keybinding: { primary: KeyMod.CtrlCmd | KeyCode.KeyP, weight: KeybindingWeight.ExternalExtension + 1 }
+		});
+	}
+	run(): void { FlideBar.current?.openSearch('files'); }
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
 			id: 'flide.runOrStop',
 			title: localize2('flide.runOrStop', 'FLIDE: Run / Stop'),
 			f1: true,

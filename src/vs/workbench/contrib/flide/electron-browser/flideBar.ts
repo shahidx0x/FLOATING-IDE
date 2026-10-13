@@ -5,6 +5,13 @@
 
 import './media/flide.css';
 import { $, addDisposableListener, append, clearNode, getWindow } from '../../../../base/browser/dom.js';
+import { RunOnceScheduler } from '../../../../base/common/async.js';
+import { VSBuffer } from '../../../../base/common/buffer.js';
+import { basename as resBasename, dirname as resDirname, joinPath, relativePath } from '../../../../base/common/resources.js';
+import { escapeRegExpCharacters } from '../../../../base/common/strings.js';
+import { IBulkEditService, ResourceTextEdit } from '../../../../editor/browser/services/bulkEditService.js';
+import { Range } from '../../../../editor/common/core/range.js';
+import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
@@ -19,11 +26,9 @@ import { IConfigurationService } from '../../../../platform/configuration/common
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
-import { IProductService } from '../../../../platform/product/common/productService.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { EditorResourceAccessor, SideBySideEditor } from '../../../common/editor.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
-import { IHistoryService } from '../../../services/history/common/history.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { ILifecycleService, LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
 import { ITerminalInstance, ITerminalService } from '../../terminal/browser/terminal.js';
@@ -49,6 +54,16 @@ const PINNED_WIDTH = 280;
 
 const HIDDEN_ENTRIES = new Set(['.git', 'node_modules', '__pycache__', '.venv', 'venv', '.DS_Store', '.idea', '.vs']);
 
+interface SearchHitRow { line: number; start: number; end: number; pre: string; hit: string; post: string }
+
+interface SearchResults {
+	files: { uri: URI; pre: string; hit: string; post: string; dir: string }[];
+	groups: { uri: URI; name: string; count: number; rows: SearchHitRow[] }[];
+	total: number;
+	fileCount: number;
+	invalid: boolean;
+}
+
 export class FlideBar extends Disposable {
 
 	static current: FlideBar | undefined;
@@ -69,6 +84,30 @@ export class FlideBar extends Disposable {
 	private readonly drawerContent = this._register(new DisposableStore());
 	private readonly expandedFolders = new Set<string>();
 	private pinned = false;
+	private readonly menuSearch = { open: false, mode: 'text' as 'text' | 'files', q: '', mc: false, ww: false, rx: false, replace: false, replaceWith: '' };
+	private creating: 'file' | 'folder' | undefined;
+	private createDraft = '';
+	private readonly newEntries = new Set<string>();
+	private fileIndex: { uri: URI; size: number }[] | undefined;
+	private searchSeq = 0;
+	private searchResults: SearchResults | undefined;
+	private drawerBody: HTMLElement | undefined;
+	private searchPanel: HTMLElement | undefined;
+	private searchInput: HTMLInputElement | undefined;
+	private searchBox: HTMLElement | undefined;
+	private replaceRow: HTMLElement | undefined;
+	private replaceInput: HTMLInputElement | undefined;
+	private replaceToggle: HTMLElement | undefined;
+	private summaryEl: HTMLElement | undefined;
+	private searchSegButtons: HTMLButtonElement[] = [];
+	private searchOptButtons: HTMLButtonElement[] = [];
+	private headButtons: { file?: HTMLElement; folder?: HTMLElement; search?: HTMLElement } = {};
+	private readonly searchScheduler = this._register(new RunOnceScheduler(() => this.runSearch(), 200));
+	private readonly treeRefresh = this._register(new RunOnceScheduler(() => {
+		if (this.drawer && !this.menuSearch.open && !this.creating) {
+			this.renderDrawerBody();
+		}
+	}, 200));
 
 	private runInstance: ITerminalInstance | undefined;
 	private running = false;
@@ -81,11 +120,11 @@ export class FlideBar extends Disposable {
 		@ICommandService private readonly commandService: ICommandService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IFileService private readonly fileService: IFileService,
-		@IHistoryService private readonly historyService: IHistoryService,
 		@INotificationService private readonly notificationService: INotificationService,
-		@IProductService private readonly productService: IProductService,
 		@ITerminalService private readonly terminalService: ITerminalService,
 		@IInstantiationService instantiationService: IInstantiationService,
+		@IBulkEditService private readonly bulkEditService: IBulkEditService,
+		@IDialogService private readonly dialogService: IDialogService,
 		@ILifecycleService lifecycleService: ILifecycleService,
 	) {
 		super();
@@ -161,6 +200,11 @@ export class FlideBar extends Disposable {
 			}
 		}));
 
+		this._register(this.fileService.onDidFilesChange(() => {
+			this.fileIndex = undefined;
+			this.treeRefresh.schedule();
+		}));
+
 		this.updateTitle();
 		this.setRunning(false);
 		this.updateTerminalButton();
@@ -221,6 +265,14 @@ export class FlideBar extends Disposable {
 		}
 	}
 
+	/** Ctrl+Shift+F (In files) / Ctrl+P (File names): open the menu straight into search. */
+	openSearch(mode: 'text' | 'files'): void {
+		if (!this.drawer) {
+			this.openMenu();
+		}
+		this.toggleSearch(true, mode);
+	}
+
 	private pin(): void {
 		this.closeMenu();
 		this.pinned = true;
@@ -245,13 +297,12 @@ export class FlideBar extends Disposable {
 
 	private openMenu(): void {
 		const host = this.layoutService.mainContainer;
-		this.drawer = append(host, $('.flide-drawer'));
+		const drawer = this.drawer = append(host, $('.flide-drawer'));
 		this.menuButton.classList.add('is-active');
 		this.menuButton.classList.toggle('is-pinned', this.pinned);
 
 		if (this.pinned) {
 			// Sit exactly on the reserved side bar area and follow its size (also when dragging its edge)
-			const drawer = this.drawer;
 			drawer.classList.add('is-pinned');
 			const sidebar = host.querySelector<HTMLElement>('.part.sidebar');
 			if (sidebar) {
@@ -274,75 +325,219 @@ export class FlideBar extends Disposable {
 				}
 			}));
 		}
+		this.buildDrawer(drawer);
 		this.renderDrawer();
 	}
 
 	closeMenu(): void {
+		this.searchScheduler.cancel();
 		this.menuListeners.clear();
 		this.drawerContent.clear();
 		this.drawer?.remove();
 		this.dim?.remove();
 		this.drawer = undefined;
 		this.dim = undefined;
+		this.drawerBody = this.searchPanel = this.searchInput = this.searchBox = this.replaceRow = this.replaceToggle = this.summaryEl = undefined;
+		this.searchSegButtons = [];
+		this.searchOptButtons = [];
+		this.headButtons = {};
+		this.menuSearch.open = false;
+		this.creating = undefined;
 		this.menuButton.classList.remove('is-active', 'is-pinned');
 	}
 
-	private renderDrawer(): void {
-		const drawer = this.drawer;
-		if (!drawer) {
-			return;
-		}
-		const scrollTop = drawer.querySelector('.flide-drawer-body')?.scrollTop ?? 0;
-		this.drawerContent.clear();
-		clearNode(drawer);
+	/** The parts of the drawer that stay put while typing: header icons, search box, footer. */
+	private buildDrawer(drawer: HTMLElement): void {
+		const store = this.menuListeners;
+		const root = this.contextService.getWorkspace().folders[0];
 
-		// Header: back arrow + Go to file
+		// Header: project name + New file · New folder · Search
 		const head = append(drawer, $('.flide-drawer-head'));
 		if (this.pinned) {
-			this.iconButtonIn(head, Codicon.pinned, 'Unpin menu (Ctrl+B)', () => this.unpin());
-		} else {
-			this.iconButtonIn(head, Codicon.chevronLeft, 'Close menu', () => this.closeMenu());
+			this.iconButtonIn(head, Codicon.pinned, 'Unpin menu (Ctrl+B)', () => this.unpin(), store);
 		}
-		const search = append(head, $('button.flide-search')) as HTMLButtonElement;
-		search.type = 'button';
-		append(search, renderIcon(Codicon.search));
-		append(search, $('span')).textContent = 'Go to file';
-		append(search, $('span.flide-kbd')).textContent = 'Ctrl+P';
-		this.drawerContent.add(addDisposableListener(search, 'click', () => {
-			if (!this.pinned) {
-				this.closeMenu();
+		append(head, $('span.flide-proj')).textContent = root ? root.name : 'No folder open';
+		this.headButtons.file = this.iconButtonIn(head, Codicon.newFile, 'New file', () => this.startCreate('file'), store);
+		this.headButtons.folder = this.iconButtonIn(head, Codicon.newFolder, 'New folder', () => this.startCreate('folder'), store);
+		this.headButtons.search = this.iconButtonIn(head, Codicon.search, 'Search (Ctrl+Shift+F)', () => this.toggleSearch(), store);
+		if (!root) {
+			(this.headButtons.file as HTMLButtonElement).disabled = true;
+			(this.headButtons.folder as HTMLButtonElement).disabled = true;
+		}
+
+		// Search panel (shown when the search icon is on)
+		const panel = this.searchPanel = append(drawer, $('.flide-search-panel'));
+		const seg = append(panel, $('.flide-seg.is-full'));
+		for (const [mode, label] of [['text', 'In files'], ['files', 'File names']] as const) {
+			const b = append(seg, $('button')) as HTMLButtonElement;
+			b.type = 'button';
+			b.textContent = label;
+			b.dataset.mode = mode;
+			store.add(addDisposableListener(b, 'click', () => {
+				this.menuSearch.mode = mode;
+				if (mode === 'files') {
+					this.menuSearch.replace = false;
+				}
+				this.renderSearchChrome();
+				this.runSearch();
+				this.searchInput?.focus();
+			}));
+			this.searchSegButtons.push(b);
+		}
+
+		const row = append(panel, $('.flide-srow'));
+		this.replaceToggle = this.iconButtonIn(row, Codicon.chevronRight, 'Toggle replace', () => {
+			this.menuSearch.replace = !this.menuSearch.replace;
+			this.renderSearchChrome();
+			if (this.menuSearch.replace) {
+				this.replaceInput?.focus();
 			}
-			this.commandService.executeCommand('workbench.action.quickOpen');
+		}, store);
+		this.replaceToggle.classList.add('flide-replace-toggle');
+
+		const col = append(row, $('.flide-scol'));
+		const box = this.searchBox = append(col, $('label.flide-sbox'));
+		const input = this.searchInput = append(box, $('input')) as HTMLInputElement;
+		input.type = 'text';
+		input.value = this.menuSearch.q;
+		input.setAttribute('aria-label', 'Search');
+		store.add(addDisposableListener(input, 'input', () => {
+			this.menuSearch.q = input.value;
+			this.searchScheduler.schedule();
 		}));
-
-		const body = append(drawer, $('.flide-drawer-body'));
-
-		// Recent files
-		const recent = this.recentFiles(6);
-		if (recent.length) {
-			append(body, $('.flide-section')).textContent = 'Recent';
-			for (const uri of recent) {
-				const folder = basename(dirname(uri.fsPath));
-				this.item(body, Codicon.history, basename(uri.fsPath), folder, () => this.openFile(uri));
+		store.add(addDisposableListener(input, 'keydown', (e: KeyboardEvent) => {
+			if (e.key === 'Escape') {
+				e.stopPropagation();
+				this.toggleSearch(false);
+			} else if (e.key === 'Enter') {
+				this.openFirstResult();
 			}
+		}));
+		for (const [key, label, title] of [['mc', 'Aa', 'Match case'], ['ww', 'ab', 'Whole word'], ['rx', '.*', 'Regular expression']] as const) {
+			const b = append(box, $('button.flide-sopt')) as HTMLButtonElement;
+			b.type = 'button';
+			b.textContent = label;
+			b.title = title;
+			b.setAttribute('aria-label', title);
+			b.dataset.opt = key;
+			store.add(addDisposableListener(b, 'click', e => {
+				e.preventDefault();
+				this.menuSearch[key] = !this.menuSearch[key];
+				this.renderSearchChrome();
+				this.runSearch();
+			}));
+			this.searchOptButtons.push(b);
 		}
 
-		// Project files
+		const replaceRow = this.replaceRow = append(col, $('.flide-replace-row'));
+		const replaceInput = this.replaceInput = append(replaceRow, $('input')) as HTMLInputElement;
+		replaceInput.type = 'text';
+		replaceInput.placeholder = 'Replace';
+		replaceInput.value = this.menuSearch.replaceWith;
+		replaceInput.setAttribute('aria-label', 'Replace');
+		store.add(addDisposableListener(replaceInput, 'input', () => { this.menuSearch.replaceWith = replaceInput.value; }));
+		store.add(addDisposableListener(replaceInput, 'keydown', (e: KeyboardEvent) => {
+			if (e.key === 'Escape') {
+				e.stopPropagation();
+				this.toggleSearch(false);
+			} else if (e.key === 'Enter') {
+				this.replaceAll();
+			}
+		}));
+		this.iconButtonIn(replaceRow, Codicon.replaceAll, 'Replace all', () => this.replaceAll(), store);
+
+		this.summaryEl = append(panel, $('span.flide-summary'));
+
+		this.drawerBody = append(drawer, $('.flide-drawer-body'));
+
+		// Footer
+		const foot = append(drawer, $('.flide-drawer-foot'));
+		this.item(foot, Codicon.folderOpened, 'Open folder…', () => this.runCommand('workbench.action.files.openFolder'), { detail: 'Ctrl+O', store });
+		this.item(foot, Codicon.settingsGear, 'Settings', () => this.runCommand('workbench.action.openSettings'), { detail: 'Ctrl+,', store });
+	}
+
+	private renderDrawer(): void {
+		this.renderSearchChrome();
+		this.renderDrawerBody();
+	}
+
+	private renderSearchChrome(): void {
+		const s = this.menuSearch;
+		this.headButtons.search?.classList.toggle('is-active', s.open);
+		this.headButtons.file?.classList.toggle('is-active', this.creating === 'file');
+		this.headButtons.folder?.classList.toggle('is-active', this.creating === 'folder');
+		if (!this.searchPanel || !this.searchInput || !this.searchBox || !this.replaceRow || !this.replaceToggle || !this.summaryEl) {
+			return;
+		}
+		this.searchPanel.style.display = s.open ? '' : 'none';
+		for (const b of this.searchSegButtons) {
+			const on = b.dataset.mode === s.mode;
+			b.classList.toggle('is-on', on);
+			b.setAttribute('aria-pressed', String(on));
+		}
+		const textMode = s.mode === 'text';
+		this.replaceToggle.style.display = textMode ? '' : 'none';
+		this.replaceToggle.classList.toggle('is-open', s.replace);
+		for (const b of this.searchOptButtons) {
+			const on = !!s[b.dataset.opt as 'mc' | 'ww' | 'rx'];
+			b.style.display = textMode ? '' : 'none';
+			b.classList.toggle('is-on', on);
+			b.setAttribute('aria-pressed', String(on));
+		}
+		this.replaceRow.style.display = textMode && s.replace ? '' : 'none';
+		this.searchInput.placeholder = textMode ? 'Search  (Ctrl+Shift+F)' : 'Go to file  (Ctrl+P)';
+		const invalid = !!this.searchResults?.invalid;
+		this.searchBox.classList.toggle('is-invalid', invalid);
+		this.summaryEl.classList.toggle('is-invalid', invalid);
+		this.summaryEl.textContent = this.summaryText();
+	}
+
+	private summaryText(): string {
+		const s = this.menuSearch;
+		const r = this.searchResults;
 		const root = this.contextService.getWorkspace().folders[0];
-		append(body, $('.flide-section')).textContent = root ? root.name : 'No folder open';
+		const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+		if (!root) {
+			return 'Open a folder to search it';
+		}
+		if (r?.invalid) {
+			return 'Invalid regular expression';
+		}
+		if (!s.q) {
+			return s.mode === 'text' ? `Search inside every file in ${root.name}` : 'Find a file by name';
+		}
+		if (!r) {
+			return 'Searching…';
+		}
+		if (r.total === 0) {
+			return 'No results';
+		}
+		return s.mode === 'files' ? plural(r.total, 'file') : `${plural(r.total, 'result')} in ${plural(r.fileCount, 'file')}`;
+	}
+
+	private renderDrawerBody(): void {
+		const body = this.drawerBody;
+		if (!body) {
+			return;
+		}
+		const scrollTop = body.scrollTop;
+		this.drawerContent.clear();
+		clearNode(body);
+
+		if (this.menuSearch.open) {
+			this.renderResults(body);
+			return;
+		}
+		if (this.creating) {
+			this.renderCreateBox(body);
+		}
+		const root = this.contextService.getWorkspace().folders[0];
 		if (root) {
 			const tree = append(body, $('.flide-tree'));
 			this.renderFolder(tree, root.uri, 0).then(() => { body.scrollTop = scrollTop; });
 		} else {
-			this.item(body, Codicon.folderOpened, 'Open a folder to see its files', undefined, () => this.runCommand('workbench.action.files.openFolder'));
+			this.item(body, Codicon.folderOpened, 'Open a folder to see its files', () => this.runCommand('workbench.action.files.openFolder'));
 		}
-
-		// Footer
-		const foot = append(drawer, $('.flide-drawer-foot'));
-		this.item(foot, Codicon.folderOpened, 'Open folder…', 'Ctrl+O', () => this.runCommand('workbench.action.files.openFolder'));
-		this.item(foot, Codicon.search, 'Search in files', 'Ctrl+Shift+F', () => this.runCommand('workbench.action.findInFiles'));
-		this.item(foot, Codicon.settingsGear, 'Settings', 'Ctrl+,', () => this.runCommand('workbench.action.openSettings'));
-		append(foot, $('.flide-version')).textContent = `FLIDE ${this.productService.version}`;
 	}
 
 	private async renderFolder(parent: HTMLElement, folder: URI, depth: number): Promise<void> {
@@ -358,67 +553,458 @@ export class FlideBar extends Disposable {
 			.sort((a, b) => a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1);
 
 		for (const child of sorted) {
+			const key = child.resource.toString();
+			const isNew = this.newEntries.has(key);
 			if (child.isDirectory) {
-				const key = child.resource.toString();
 				const open = this.expandedFolders.has(key);
-				const row = this.item(parent, open ? Codicon.chevronDown : Codicon.chevronRight, child.name, undefined, () => {
+				const row = this.item(parent, open ? Codicon.chevronDown : Codicon.chevronRight, child.name, () => {
 					if (this.expandedFolders.has(key)) {
 						this.expandedFolders.delete(key);
 					} else {
 						this.expandedFolders.add(key);
 					}
-					this.renderDrawer();
-				}, depth);
+					this.renderDrawerBody();
+				}, { depth, isNew });
 				row.classList.add('is-folder');
 				if (open) {
 					await this.renderFolder(append(parent, $('.flide-tree-sub')), child.resource, depth + 1);
 				}
 			} else {
-				const row = this.item(parent, Codicon.file, child.name, undefined, () => this.openFile(child.resource), depth);
-				if (child.resource.toString() === active) {
+				const row = this.item(parent, Codicon.file, child.name, () => this.openFile(child.resource), { depth, isNew });
+				if (key === active) {
 					row.classList.add('is-active');
 				}
 			}
 		}
 	}
 
-	private recentFiles(max: number): URI[] {
-		const result: URI[] = [];
-		const seen = new Set<string>();
-		for (const input of this.historyService.getHistory()) {
-			const uri = EditorResourceAccessor.getOriginalUri(input, { supportSideBySide: SideBySideEditor.PRIMARY });
-			if (!uri || uri.scheme !== Schemas.file || seen.has(uri.toString())) {
-				continue;
+	//#endregion
+
+
+	//#region Menu: new file / folder
+
+	private startCreate(kind: 'file' | 'folder'): void {
+		this.menuSearch.open = false;
+		this.creating = this.creating === kind ? undefined : kind;
+		this.createDraft = '';
+		this.renderDrawer();
+	}
+
+	private renderCreateBox(body: HTMLElement): void {
+		const kind = this.creating;
+		const box = append(body, $('.flide-create'));
+		append(box, renderIcon(kind === 'folder' ? Codicon.folder : Codicon.file));
+		const input = append(box, $('input')) as HTMLInputElement;
+		input.type = 'text';
+		input.value = this.createDraft;
+		input.placeholder = kind === 'folder' ? 'Folder name' : 'File name, e.g. main.py';
+		input.setAttribute('aria-label', input.placeholder);
+		this.drawerContent.add(addDisposableListener(input, 'input', () => { this.createDraft = input.value; }));
+		this.drawerContent.add(addDisposableListener(input, 'keydown', (e: KeyboardEvent) => {
+			if (e.key === 'Enter') {
+				this.confirmCreate();
+			} else if (e.key === 'Escape') {
+				e.stopPropagation();
+				this.creating = undefined;
+				this.renderDrawer();
 			}
-			seen.add(uri.toString());
-			result.push(uri);
-			if (result.length >= max) {
-				break;
+		}));
+		const ok = append(box, $('button.flide-create-ok')) as HTMLButtonElement;
+		ok.type = 'button';
+		ok.title = 'Create';
+		ok.setAttribute('aria-label', 'Create');
+		append(ok, renderIcon(Codicon.check));
+		this.drawerContent.add(addDisposableListener(ok, 'click', () => this.confirmCreate()));
+		const cancel = append(box, $('button.flide-create-cancel')) as HTMLButtonElement;
+		cancel.type = 'button';
+		cancel.title = 'Cancel';
+		cancel.setAttribute('aria-label', 'Cancel');
+		append(cancel, renderIcon(Codicon.close));
+		this.drawerContent.add(addDisposableListener(cancel, 'click', () => { this.creating = undefined; this.renderDrawer(); }));
+		append(body, $('span.flide-create-hint')).textContent = 'Enter to create · Esc to cancel';
+		input.focus();
+	}
+
+	private async confirmCreate(): Promise<void> {
+		const kind = this.creating;
+		const root = this.contextService.getWorkspace().folders[0];
+		const name = this.createDraft.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+		if (!kind || !root || !name) {
+			return;
+		}
+		const parts = name.split('/').filter(Boolean);
+		if (/[<>:"|?*\u0000-\u001f]/.test(name) || parts.some(p => p === '..' || p === '.')) {
+			this.notificationService.warn(`"${name}" can't be used as a ${kind} name.`);
+			return;
+		}
+		const target = joinPath(root.uri, ...parts);
+		try {
+			if (await this.fileService.exists(target)) {
+				this.notificationService.info(`${name} already exists.`);
+				return;
+			}
+			if (kind === 'folder') {
+				await this.fileService.createFolder(target);
+				this.expandedFolders.add(target.toString()); // new folders open automatically
+			} else {
+				await this.fileService.createFile(target, VSBuffer.fromString(''));
+			}
+			// open the folders on the way to it
+			for (let p = resDirname(target); p.path.length > root.uri.path.length; p = resDirname(p)) {
+				this.expandedFolders.add(p.toString());
+			}
+			this.newEntries.add(target.toString());
+			this.creating = undefined;
+			this.createDraft = '';
+			this.fileIndex = undefined;
+			this.renderDrawer();
+			if (kind === 'file') {
+				await this.editorService.openEditor({ resource: target, options: { pinned: true } });
+			}
+		} catch (err) {
+			this.notificationService.error(`Could not create ${name}: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+
+	//#endregion
+
+	//#region Menu: search & replace
+
+	private toggleSearch(force?: boolean, mode?: 'text' | 'files'): void {
+		const s = this.menuSearch;
+		s.open = force ?? !s.open;
+		if (mode) {
+			s.mode = mode;
+			if (mode === 'files') {
+				s.replace = false;
 			}
 		}
+		if (s.open) {
+			this.creating = undefined;
+		}
+		this.renderDrawer();
+		if (s.open) {
+			this.searchInput?.focus();
+			this.searchInput?.select();
+			if (s.q) {
+				this.runSearch();
+			}
+		}
+	}
+
+	private buildRegex(): RegExp | 'invalid' | undefined {
+		const s = this.menuSearch;
+		if (!s.q) {
+			return undefined;
+		}
+		const text = s.mode === 'text';
+		let source = text && s.rx ? s.q : escapeRegExpCharacters(s.q);
+		if (text && s.ww) {
+			source = `\\b(?:${source})\\b`;
+		}
+		try {
+			return new RegExp(source, text && s.mc ? 'g' : 'gi');
+		} catch {
+			return 'invalid';
+		}
+	}
+
+	private async getFileIndex(): Promise<{ uri: URI; size: number }[]> {
+		if (this.fileIndex) {
+			return this.fileIndex;
+		}
+		const root = this.contextService.getWorkspace().folders[0];
+		if (!root) {
+			return [];
+		}
+		const result: { uri: URI; size: number }[] = [];
+		const queue: URI[] = [root.uri];
+		while (queue.length && result.length < 5000) {
+			const batch = queue.splice(0, 16);
+			const stats = await Promise.all(batch.map(uri => this.fileService.resolve(uri, { resolveMetadata: true }).catch(() => undefined)));
+			for (const stat of stats) {
+				for (const child of stat?.children ?? []) {
+					if (HIDDEN_ENTRIES.has(child.name)) {
+						continue;
+					}
+					if (child.isDirectory) {
+						queue.push(child.resource);
+					} else {
+						result.push({ uri: child.resource, size: (child as { size?: number }).size ?? 0 });
+					}
+				}
+			}
+		}
+		result.sort((a, b) => a.uri.path.localeCompare(b.uri.path));
+		this.fileIndex = result;
 		return result;
 	}
 
-	private item(parent: HTMLElement, icon: ThemeIcon, label: string, detail: string | undefined, onClick: () => void, depth = 0): HTMLElement {
+	private async runSearch(): Promise<void> {
+		const seq = ++this.searchSeq;
+		const s = this.menuSearch;
+		const re = this.buildRegex();
+		if (re === 'invalid') {
+			this.searchResults = { files: [], groups: [], total: 0, fileCount: 0, invalid: true };
+			this.renderDrawer();
+			return;
+		}
+		if (!re) {
+			this.searchResults = undefined;
+			this.renderDrawer();
+			return;
+		}
+		this.searchResults = undefined;
+		this.renderSearchChrome();
+
+		const index = await this.getFileIndex();
+		if (seq !== this.searchSeq) {
+			return;
+		}
+		const root = this.contextService.getWorkspace().folders[0]?.uri;
+		const results: SearchResults = { files: [], groups: [], total: 0, fileCount: 0, invalid: false };
+
+		if (s.mode === 'files') {
+			for (const f of index) {
+				const name = resBasename(f.uri);
+				re.lastIndex = 0;
+				const m = re.exec(name);
+				if (!m || !m[0].length) {
+					continue;
+				}
+				results.total++;
+				if (results.files.length < 200) {
+					results.files.push({
+						uri: f.uri,
+						pre: name.slice(0, m.index), hit: m[0], post: name.slice(m.index + m[0].length),
+						dir: root ? (relativePath(root, resDirname(f.uri)) ?? '') : ''
+					});
+				}
+			}
+			results.fileCount = results.total;
+		} else {
+			for (const f of index) {
+				if (f.size > 1_000_000) {
+					continue;
+				}
+				let text: string;
+				try {
+					text = (await this.fileService.readFile(f.uri)).value.toString();
+				} catch {
+					continue;
+				}
+				if (seq !== this.searchSeq) {
+					return;
+				}
+				if (text.indexOf('\u0000') !== -1) {
+					continue; // binary file
+				}
+				const { count, rows } = this.matchLines(text, re, 6);
+				if (!count) {
+					continue;
+				}
+				results.total += count;
+				results.fileCount++;
+				results.groups.push({ uri: f.uri, name: root ? (relativePath(root, f.uri) ?? resBasename(f.uri)) : resBasename(f.uri), count, rows });
+				if (results.total >= 2000) {
+					break;
+				}
+			}
+		}
+		if (seq !== this.searchSeq) {
+			return;
+		}
+		this.searchResults = results;
+		this.renderDrawer();
+	}
+
+	private matchLines(text: string, re: RegExp, maxRows: number): { count: number; rows: SearchHitRow[] } {
+		const rows: SearchHitRow[] = [];
+		let count = 0;
+		const lines = text.split(/\r?\n/);
+		for (let i = 0; i < lines.length && count < 1000; i++) {
+			const line = lines[i];
+			re.lastIndex = 0;
+			let m: RegExpExecArray | null;
+			while ((m = re.exec(line))) {
+				if (!m[0].length) {
+					re.lastIndex++;
+					if (re.lastIndex > line.length) {
+						break;
+					}
+					continue;
+				}
+				count++;
+				if (rows.length < maxRows) {
+					const start = m.index;
+					const end = start + m[0].length;
+					rows.push({
+						line: i + 1, start, end,
+						pre: (start > 28 ? '…' : '') + line.slice(Math.max(0, start - 28), start).trimStart(),
+						hit: m[0],
+						post: line.slice(end, end + 90)
+					});
+				}
+			}
+		}
+		return { count, rows };
+	}
+
+	private renderResults(body: HTMLElement): void {
+		const r = this.searchResults;
+		if (!r || r.invalid) {
+			return;
+		}
+		const highlight = (parent: HTMLElement, pre: string, hit: string, post: string) => {
+			const text = append(parent, $('span.flide-hit-text'));
+			text.append(pre);
+			append(text, $('mark')).textContent = hit;
+			text.append(post);
+		};
+		if (this.menuSearch.mode === 'files') {
+			for (const h of r.files) {
+				const row = append(body, $('button.flide-hit')) as HTMLButtonElement;
+				row.type = 'button';
+				append(row, renderIcon(Codicon.file));
+				highlight(row, h.pre, h.hit, h.post);
+				if (h.dir) {
+					append(row, $('span.flide-hit-dir')).textContent = h.dir;
+				}
+				this.drawerContent.add(addDisposableListener(row, 'click', () => this.openFile(h.uri)));
+			}
+			return;
+		}
+		for (const g of r.groups) {
+			const group = append(body, $('.flide-hit-group'));
+			const head = append(group, $('.flide-hit-head'));
+			append(head, renderIcon(Codicon.file));
+			append(head, $('span.flide-hit-file')).textContent = g.name;
+			append(head, $('span.flide-count')).textContent = String(g.count);
+			for (const row of g.rows) {
+				const b = append(group, $('button.flide-hit-line')) as HTMLButtonElement;
+				b.type = 'button';
+				b.title = `${g.name}:${row.line}`;
+				append(b, $('span.flide-hit-ln')).textContent = String(row.line);
+				highlight(b, row.pre, row.hit, row.post);
+				this.drawerContent.add(addDisposableListener(b, 'click', () => this.openAt(g.uri, row)));
+			}
+			if (g.count > g.rows.length) {
+				append(group, $('span.flide-hit-more')).textContent = `+ ${g.count - g.rows.length} more in this file`;
+			}
+		}
+	}
+
+	private openFirstResult(): void {
+		const r = this.searchResults;
+		if (!r) {
+			return;
+		}
+		if (this.menuSearch.mode === 'files' && r.files[0]) {
+			this.openFile(r.files[0].uri);
+		} else if (r.groups[0]?.rows[0]) {
+			this.openAt(r.groups[0].uri, r.groups[0].rows[0]);
+		}
+	}
+
+	private openAt(uri: URI, row: SearchHitRow): void {
+		if (!this.pinned) {
+			this.closeMenu();
+		}
+		this.editorService.openEditor({
+			resource: uri,
+			options: {
+				pinned: true,
+				selection: { startLineNumber: row.line, startColumn: row.start + 1, endLineNumber: row.line, endColumn: row.end + 1 }
+			}
+		});
+	}
+
+	private async replaceAll(): Promise<void> {
+		const s = this.menuSearch;
+		const re = this.buildRegex();
+		if (s.mode !== 'text' || !re || re === 'invalid') {
+			return;
+		}
+		const single = new RegExp(re.source, re.flags.replace('g', ''));
+		const edits: ResourceTextEdit[] = [];
+		let files = 0;
+		for (const f of await this.getFileIndex()) {
+			if (f.size > 1_000_000) {
+				continue;
+			}
+			let text: string;
+			try {
+				text = (await this.fileService.readFile(f.uri)).value.toString();
+			} catch {
+				continue;
+			}
+			if (text.indexOf('\u0000') !== -1) {
+				continue;
+			}
+			let touched = false;
+			text.split(/\r?\n/).forEach((line, i) => {
+				re.lastIndex = 0;
+				let m: RegExpExecArray | null;
+				while ((m = re.exec(line))) {
+					if (!m[0].length) {
+						re.lastIndex++;
+						if (re.lastIndex > line.length) {
+							break;
+						}
+						continue;
+					}
+					const replacement = s.rx ? m[0].replace(single, s.replaceWith) : s.replaceWith;
+					edits.push(new ResourceTextEdit(f.uri, { range: new Range(i + 1, m.index + 1, i + 1, m.index + m[0].length + 1), text: replacement }));
+					touched = true;
+				}
+			});
+			if (touched) {
+				files++;
+			}
+		}
+		if (!edits.length) {
+			this.notificationService.info('Nothing to replace.');
+			return;
+		}
+		const { confirmed } = await this.dialogService.confirm({
+			message: `Replace ${edits.length} match${edits.length === 1 ? '' : 'es'} in ${files} file${files === 1 ? '' : 's'}?`,
+			detail: `"${s.q}"  →  "${s.replaceWith}"`,
+			primaryButton: 'Replace all'
+		});
+		if (!confirmed) {
+			return;
+		}
+		await this.bulkEditService.apply(edits, { label: 'FLIDE: Replace all' });
+		this.runSearch();
+	}
+
+	//#endregion
+
+	//#region Menu: small building blocks
+
+	private item(parent: HTMLElement, icon: ThemeIcon, label: string, onClick: () => void, opts: { detail?: string; depth?: number; isNew?: boolean; store?: DisposableStore } = {}): HTMLElement {
 		const row = append(parent, $('button.flide-item')) as HTMLButtonElement;
 		row.type = 'button';
-		row.style.paddingLeft = `${10 + depth * 14}px`;
+		row.style.paddingLeft = `${10 + (opts.depth ?? 0) * 14}px`;
 		append(row, renderIcon(icon));
 		append(row, $('span.flide-item-label')).textContent = label;
-		if (detail) {
-			append(row, $('span.flide-item-detail')).textContent = detail;
+		if (opts.isNew) {
+			append(row, $('span.flide-new')).textContent = 'new';
 		}
-		this.drawerContent.add(addDisposableListener(row, 'click', () => onClick()));
+		if (opts.detail) {
+			append(row, $('span.flide-item-detail')).textContent = opts.detail;
+		}
+		(opts.store ?? this.drawerContent).add(addDisposableListener(row, 'click', () => onClick()));
 		return row;
 	}
 
-	private iconButtonIn(parent: HTMLElement, icon: ThemeIcon, label: string, onClick: () => void): HTMLElement {
+	private iconButtonIn(parent: HTMLElement, icon: ThemeIcon, label: string, onClick: () => void, store: DisposableStore): HTMLElement {
 		const button = append(parent, $('button.flide-icon-btn')) as HTMLButtonElement;
 		button.type = 'button';
 		button.title = label;
 		button.setAttribute('aria-label', label);
 		append(button, renderIcon(icon));
-		this.drawerContent.add(addDisposableListener(button, 'click', () => onClick()));
+		store.add(addDisposableListener(button, 'click', e => { e.preventDefault(); onClick(); }));
 		return button;
 	}
 
@@ -430,9 +1016,7 @@ export class FlideBar extends Disposable {
 	}
 
 	private runCommand(id: string): void {
-		if (this.pinned && id === 'workbench.action.findInFiles') {
-			this.unpin(); // search uses the side bar itself
-		} else if (!this.pinned) {
+		if (!this.pinned) {
 			this.closeMenu();
 		}
 		this.commandService.executeCommand(id);
@@ -537,7 +1121,7 @@ export class FlideBar extends Disposable {
 		this.running = running;
 		this.runButton.classList.toggle('is-running', running);
 		clearNode(this.runIcon);
-		append(this.runIcon, renderIcon(running ? Codicon.debugStop : Codicon.play));
+		append(this.runIcon, renderIcon(running ? Codicon.debugStop : Codicon.debugStart));
 		this.runLabel.textContent = running ? 'Stop' : 'Run';
 		this.runButton.title = running ? 'Stop (F5)' : 'Run (F5)';
 		this.terminalButton.classList.toggle('has-dot', running);

@@ -12,6 +12,18 @@ import { escapeRegExpCharacters } from '../../../../base/common/strings.js';
 import { IBulkEditService, ResourceTextEdit } from '../../../../editor/browser/services/bulkEditService.js';
 import { Range } from '../../../../editor/common/core/range.js';
 import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
+import { StandardMouseEvent } from '../../../../base/browser/mouseEvent.js';
+import { IAction, SubmenuAction, toAction } from '../../../../base/common/actions.js';
+import { CancellationToken } from '../../../../base/common/cancellation.js';
+import { ILanguageService } from '../../../../editor/common/languages/language.js';
+import { getFlatContextMenuActions } from '../../../../platform/actions/browser/menuEntryActionViewItem.js';
+import { IMenuService, MenuId } from '../../../../platform/actions/common/actions.js';
+import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
+import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
+import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
+import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
+import { ResourceContextKey } from '../../../common/contextkeys.js';
+import { IWorkingCopyFileService } from '../../../services/workingCopy/common/workingCopyFileService.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
@@ -28,7 +40,7 @@ import { IInstantiationService } from '../../../../platform/instantiation/common
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { EditorResourceAccessor, SideBySideEditor } from '../../../common/editor.js';
-import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { IEditorService, SIDE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { ILifecycleService, LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
 import { ITerminalInstance, ITerminalService } from '../../terminal/browser/terminal.js';
@@ -87,6 +99,8 @@ export class FlideBar extends Disposable {
 	private readonly menuSearch = { open: false, mode: 'text' as 'text' | 'files', q: '', mc: false, ww: false, rx: false, replace: false, replaceWith: '' };
 	private creating: 'file' | 'folder' | undefined;
 	private createDraft = '';
+	private createParent: URI | undefined;
+	private fileClipboard: { uris: URI[]; cut: boolean } | undefined;
 	private readonly newEntries = new Set<string>();
 	private fileIndex: { uri: URI; size: number }[] | undefined;
 	private searchSeq = 0;
@@ -125,6 +139,13 @@ export class FlideBar extends Disposable {
 		@IInstantiationService instantiationService: IInstantiationService,
 		@IBulkEditService private readonly bulkEditService: IBulkEditService,
 		@IDialogService private readonly dialogService: IDialogService,
+		@IMenuService private readonly menuService: IMenuService,
+		@IContextMenuService private readonly contextMenuService: IContextMenuService,
+		@IContextKeyService private readonly contextKeyService: IContextKeyService,
+		@IKeybindingService private readonly keybindingService: IKeybindingService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
+		@ILanguageService private readonly languageService: ILanguageService,
+		@IWorkingCopyFileService private readonly workingCopyFileService: IWorkingCopyFileService,
 		@ILifecycleService lifecycleService: ILifecycleService,
 	) {
 		super();
@@ -534,6 +555,11 @@ export class FlideBar extends Disposable {
 		const root = this.contextService.getWorkspace().folders[0];
 		if (root) {
 			const tree = append(body, $('.flide-tree'));
+			this.drawerContent.add(addDisposableListener(body, 'contextmenu', (e: MouseEvent) => {
+				if (e.target === body || e.target === tree) {
+					this.showResourceMenu(e, root.uri, true);
+				}
+			}));
 			this.renderFolder(tree, root.uri, 0).then(() => { body.scrollTop = scrollTop; });
 		} else {
 			this.item(body, Codicon.folderOpened, 'Open a folder to see its files', () => this.runCommand('workbench.action.files.openFolder'));
@@ -564,13 +590,13 @@ export class FlideBar extends Disposable {
 						this.expandedFolders.add(key);
 					}
 					this.renderDrawerBody();
-				}, { depth, isNew });
+				}, { depth, isNew, resource: child.resource, isFolder: true });
 				row.classList.add('is-folder');
 				if (open) {
 					await this.renderFolder(append(parent, $('.flide-tree-sub')), child.resource, depth + 1);
 				}
 			} else {
-				const row = this.item(parent, Codicon.file, child.name, () => this.openFile(child.resource), { depth, isNew });
+				const row = this.item(parent, Codicon.file, child.name, () => this.openFile(child.resource), { depth, isNew, resource: child.resource, isFolder: false });
 				if (key === active) {
 					row.classList.add('is-active');
 				}
@@ -583,9 +609,13 @@ export class FlideBar extends Disposable {
 
 	//#region Menu: new file / folder
 
-	private startCreate(kind: 'file' | 'folder'): void {
+	private startCreate(kind: 'file' | 'folder', parent?: URI): void {
 		this.menuSearch.open = false;
-		this.creating = this.creating === kind ? undefined : kind;
+		this.creating = this.creating === kind && !parent ? undefined : kind;
+		this.createParent = parent;
+		if (parent) {
+			this.expandedFolders.add(parent.toString());
+		}
 		this.createDraft = '';
 		this.renderDrawer();
 	}
@@ -621,7 +651,9 @@ export class FlideBar extends Disposable {
 		cancel.setAttribute('aria-label', 'Cancel');
 		append(cancel, renderIcon(Codicon.close));
 		this.drawerContent.add(addDisposableListener(cancel, 'click', () => { this.creating = undefined; this.renderDrawer(); }));
-		append(body, $('span.flide-create-hint')).textContent = 'Enter to create · Esc to cancel';
+		const rootUri = this.contextService.getWorkspace().folders[0]?.uri;
+		const where = this.createParent && rootUri ? relativePath(rootUri, this.createParent) : '';
+		append(body, $('span.flide-create-hint')).textContent = `${where ? `In ${where} · ` : ''}Enter to create · Esc to cancel`;
 		input.focus();
 	}
 
@@ -637,7 +669,7 @@ export class FlideBar extends Disposable {
 			this.notificationService.warn(`"${name}" can't be used as a ${kind} name.`);
 			return;
 		}
-		const target = joinPath(root.uri, ...parts);
+		const target = joinPath(this.createParent ?? root.uri, ...parts);
 		try {
 			if (await this.fileService.exists(target)) {
 				this.notificationService.info(`${name} already exists.`);
@@ -655,6 +687,7 @@ export class FlideBar extends Disposable {
 			}
 			this.newEntries.add(target.toString());
 			this.creating = undefined;
+			this.createParent = undefined;
 			this.createDraft = '';
 			this.fileIndex = undefined;
 			this.renderDrawer();
@@ -982,7 +1015,7 @@ export class FlideBar extends Disposable {
 
 	//#region Menu: small building blocks
 
-	private item(parent: HTMLElement, icon: ThemeIcon, label: string, onClick: () => void, opts: { detail?: string; depth?: number; isNew?: boolean; store?: DisposableStore } = {}): HTMLElement {
+	private item(parent: HTMLElement, icon: ThemeIcon, label: string, onClick: () => void, opts: { detail?: string; depth?: number; isNew?: boolean; store?: DisposableStore; resource?: URI; isFolder?: boolean } = {}): HTMLElement {
 		const row = append(parent, $('button.flide-item')) as HTMLButtonElement;
 		row.type = 'button';
 		row.style.paddingLeft = `${10 + (opts.depth ?? 0) * 14}px`;
@@ -995,6 +1028,10 @@ export class FlideBar extends Disposable {
 			append(row, $('span.flide-item-detail')).textContent = opts.detail;
 		}
 		(opts.store ?? this.drawerContent).add(addDisposableListener(row, 'click', () => onClick()));
+		const resource = opts.resource;
+		if (resource) {
+			(opts.store ?? this.drawerContent).add(addDisposableListener(row, 'contextmenu', (e: MouseEvent) => this.showResourceMenu(e, resource, !!opts.isFolder)));
+		}
 		return row;
 	}
 
@@ -1020,6 +1057,179 @@ export class FlideBar extends Disposable {
 			this.closeMenu();
 		}
 		this.commandService.executeCommand(id);
+	}
+
+	//#endregion
+
+	//#region Menu: right-click = VS Code's own Explorer context menu
+
+	/**
+	 * Shows the real Explorer context menu (same items, order, shortcuts and extension entries) for a
+	 * file or folder in the FLIDE menu. Explorer-only commands (they act on the hidden Explorer view's
+	 * selection) are routed to the clicked item; everything else runs as-is with the item as argument.
+	 */
+	private showResourceMenu(e: MouseEvent, resource: URI, isFolder: boolean): void {
+		e.preventDefault();
+		e.stopPropagation();
+		const root = this.contextService.getWorkspace().folders[0];
+		const isRoot = !!root && root.uri.toString() === resource.toString();
+		const scoped = this.contextKeyService.createScoped(this.drawer ?? this.bar);
+
+		ResourceContextKey.Resource.bindTo(scoped).set(resource.toString());
+		ResourceContextKey.HasResource.bindTo(scoped).set(true);
+		ResourceContextKey.Scheme.bindTo(scoped).set(resource.scheme);
+		ResourceContextKey.Filename.bindTo(scoped).set(resBasename(resource));
+		ResourceContextKey.Dirname.bindTo(scoped).set(resDirname(resource).fsPath);
+		ResourceContextKey.Path.bindTo(scoped).set(resource.fsPath);
+		ResourceContextKey.Extension.bindTo(scoped).set(isFolder ? '' : extname(resource.fsPath));
+		ResourceContextKey.LangId.bindTo(scoped).set(isFolder ? '' : (this.languageService.guessLanguageIdByFilepathOrFirstLine(resource) ?? ''));
+		ResourceContextKey.IsFileSystemResource.bindTo(scoped).set(true);
+
+		const explorerKeys: Record<string, boolean | string> = {
+			explorerViewletVisible: true,
+			explorerViewletFocus: true,
+			filesExplorerFocus: true,
+			explorerResourceIsFolder: isFolder,
+			explorerResourceIsRoot: isRoot,
+			explorerResourceReadonly: false,
+			explorerResourceParentReadonly: false,
+			explorerResourceCut: !!this.fileClipboard?.cut && this.fileClipboard.uris.some(u => u.toString() === resource.toString()),
+			explorerResourceMoveableToTrash: true,
+			explorerResourceAvailableEditorIds: '',
+			fileCopied: !!this.fileClipboard,
+		};
+		for (const [key, value] of Object.entries(explorerKeys)) {
+			scoped.createKey(key, value);
+		}
+
+		const groups = this.menuService.getMenuActions(MenuId.ExplorerContext, scoped, { arg: resource, shouldForwardArgs: true });
+		const actions = this.routeExplorerActions(getFlatContextMenuActions(groups), resource, isFolder);
+		this.contextMenuService.showContextMenu({
+			getAnchor: () => new StandardMouseEvent(getWindow(this.bar), e),
+			getActions: () => actions,
+			getKeyBinding: action => this.keybindingService.lookupKeybinding(action.id),
+			onHide: () => scoped.dispose(),
+		});
+	}
+
+	private routeExplorerActions(actions: readonly IAction[], resource: URI, isFolder: boolean): IAction[] {
+		const folder = isFolder ? resource : resDirname(resource);
+		const handlers: Record<string, () => unknown> = {
+			'explorer.newFile': () => this.startCreate('file', folder),
+			'explorer.newFolder': () => this.startCreate('folder', folder),
+			'renameFile': () => this.renameResource(resource),
+			'moveFileToTrash': () => this.deleteResource(resource, true),
+			'deleteFile': () => this.deleteResource(resource, false),
+			'filesExplorer.cut': () => { this.fileClipboard = { uris: [resource], cut: true }; },
+			'filesExplorer.copy': () => { this.fileClipboard = { uris: [resource], cut: false }; },
+			'filesExplorer.paste': () => this.pasteInto(folder),
+			'explorer.openToSide': () => this.editorService.openEditor({ resource, options: { pinned: true } }, SIDE_GROUP),
+			'filesExplorer.findInFolder': () => this.toggleSearch(true, 'text'),
+		};
+		return actions.map(action => {
+			if (action instanceof SubmenuAction) {
+				return new SubmenuAction(action.id, action.label, this.routeExplorerActions(action.actions, resource, isFolder), action.class);
+			}
+			const handler = handlers[action.id];
+			return handler ? toAction({ id: action.id, label: action.label, enabled: action.enabled, run: () => handler() }) : action;
+		});
+	}
+
+	private async renameResource(resource: URI): Promise<void> {
+		const name = resBasename(resource);
+		const dot = name.lastIndexOf('.');
+		const newName = await this.quickInputService.input({
+			title: `Rename ${name}`,
+			value: name,
+			valueSelection: [0, dot > 0 ? dot : name.length],
+			prompt: 'New name (Enter to rename, Esc to cancel)',
+			validateInput: async value => {
+				const v = value.trim();
+				if (!v) {
+					return 'Enter a name.';
+				}
+				return /[<>:"|?*\\/\u0000-\u001f]/.test(v) ? 'That name isn\'t allowed.' : undefined;
+			}
+		});
+		const next = newName?.trim();
+		if (!next || next === name) {
+			return;
+		}
+		const target = joinPath(resDirname(resource), next);
+		try {
+			await this.workingCopyFileService.move([{ file: { source: resource, target } }], CancellationToken.None);
+			if (this.expandedFolders.delete(resource.toString())) {
+				this.expandedFolders.add(target.toString());
+			}
+		} catch (err) {
+			this.notificationService.error(`Could not rename ${name}: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+
+	private async deleteResource(resource: URI, useTrash: boolean): Promise<void> {
+		const name = resBasename(resource);
+		const { confirmed } = await this.dialogService.confirm({
+			message: useTrash ? `Move '${name}' to the Recycle Bin?` : `Delete '${name}' permanently?`,
+			detail: useTrash ? 'You can restore it from the Recycle Bin.' : 'This can\'t be undone.',
+			primaryButton: useTrash ? 'Move to Recycle Bin' : 'Delete'
+		});
+		if (!confirmed) {
+			return;
+		}
+		try {
+			await this.workingCopyFileService.delete([{ resource, useTrash, recursive: true }], CancellationToken.None);
+		} catch (err) {
+			this.notificationService.error(`Could not delete ${name}: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+
+	private async pasteInto(folder: URI): Promise<void> {
+		const clip = this.fileClipboard;
+		if (!clip) {
+			return;
+		}
+		try {
+			for (const source of clip.uris) {
+				if (folder.toString() === source.toString() || folder.path.startsWith(source.path + '/')) {
+					continue; // a folder can't go inside itself
+				}
+				let target = joinPath(folder, resBasename(source));
+				if (clip.cut && target.toString() === source.toString()) {
+					continue;
+				}
+				target = await this.uniqueTarget(target);
+				if (clip.cut) {
+					await this.workingCopyFileService.move([{ file: { source, target } }], CancellationToken.None);
+				} else {
+					await this.workingCopyFileService.copy([{ file: { source, target } }], CancellationToken.None);
+				}
+				this.newEntries.add(target.toString());
+			}
+			if (clip.cut) {
+				this.fileClipboard = undefined;
+			}
+			this.expandedFolders.add(folder.toString());
+			this.treeRefresh.schedule();
+		} catch (err) {
+			this.notificationService.error(`Could not paste: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+
+	private async uniqueTarget(target: URI): Promise<URI> {
+		if (!(await this.fileService.exists(target))) {
+			return target;
+		}
+		const name = resBasename(target);
+		const dot = name.lastIndexOf('.');
+		const stem = dot > 0 ? name.slice(0, dot) : name;
+		const ext = dot > 0 ? name.slice(dot) : '';
+		for (let i = 1; i < 100; i++) {
+			const candidate = joinPath(resDirname(target), `${stem} copy${i > 1 ? ` ${i}` : ''}${ext}`);
+			if (!(await this.fileService.exists(candidate))) {
+				return candidate;
+			}
+		}
+		return target;
 	}
 
 	//#endregion

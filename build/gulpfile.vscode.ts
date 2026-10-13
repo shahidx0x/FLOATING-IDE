@@ -546,6 +546,12 @@ function prepareCopilotRipgrepShimTask(platform: string, arch: string, destinati
 		const appNodeModulesDir = path.join(appBase, 'node_modules.asar.unpacked');
 
 		const builtInCopilotExtensionDir = path.join(appBase, 'extensions', 'copilot');
+		// FLIDE: Copilot is not part of FLIDE. When its SDK wasn't installed (e.g. on CI), skip this
+		// Copilot-only packaging step instead of failing the whole build.
+		if (!fs.existsSync(path.join(builtInCopilotExtensionDir, 'node_modules', '@github', 'copilot', 'sdk'))) {
+			console.log('[FLIDE] Built-in Copilot SDK not present, skipping the Copilot ripgrep shim.');
+			return;
+		}
 		prepareBuiltInCopilotRipgrepShim(platform, arch, builtInCopilotExtensionDir, appNodeModulesDir);
 	};
 }

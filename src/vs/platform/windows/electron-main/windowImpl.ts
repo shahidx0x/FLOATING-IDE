@@ -34,6 +34,7 @@ import { ITelemetryService } from '../../telemetry/common/telemetry.js';
 import { ThemeIcon } from '../../../base/common/themables.js';
 import { IThemeMainService } from '../../theme/electron-main/themeMainService.js';
 import { getMenuBarVisibility, IFolderToOpen, INativeWindowConfiguration, IWindowSettings, IWorkspaceToOpen, MenuBarVisibility, hasNativeTitlebar, useNativeFullScreen, DEFAULT_CUSTOM_TITLEBAR_HEIGHT, TitlebarStyle, MenuSettings, getMacOSWindowControlsPosition } from '../../window/common/window.js';
+import { FlideFloatingWindow } from './flideFloating.js';
 import { defaultBrowserWindowOptions, getAllWindowsExcludingOffscreen, IWindowsMainService, OpenContext, WindowStateValidator } from './windows.js';
 import { ISingleFolderWorkspaceIdentifier, IWorkspaceIdentifier, isSingleFolderWorkspaceIdentifier, isWorkspaceIdentifier, toWorkspaceIdentifier } from '../../workspace/common/workspace.js';
 import { IWorkspacesManagementMainService } from '../../workspaces/electron-main/workspacesManagementMainService.js';
@@ -794,6 +795,9 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 			this._id = this._win.id;
 			this.setWin(this._win, options);
+
+			// FLIDE: float above other apps (always on top, opacity, ghost mode, global hotkeys)
+			this._register(new FlideFloatingWindow(this._win, configurationService, logService));
 
 			// Apply some state after window creation
 			this.applyState(this.windowState, hasMultipleDisplays);

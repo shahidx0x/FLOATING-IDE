@@ -139,6 +139,21 @@ import product from '../../platform/product/common/product.js';
 
 // Configuration
 (function registerConfiguration(): void {
+	// FLIDE: floating window settings (read by the main process in flideFloating.ts)
+	Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+		id: 'flide',
+		order: 1,
+		title: 'FLIDE',
+		type: 'object',
+		properties: {
+			'flide.window.alwaysOnTop': { type: 'boolean', default: true, scope: ConfigurationScope.APPLICATION, description: 'Keep FLIDE above all other applications.' },
+			'flide.window.opacity': { type: 'number', default: 0.96, minimum: 0.3, maximum: 1, scope: ConfigurationScope.APPLICATION, description: 'Window opacity (0.3 - 1).' },
+			'flide.window.ghostOpacity': { type: 'number', default: 0.45, minimum: 0.1, maximum: 0.9, scope: ConfigurationScope.APPLICATION, description: 'Opacity in Ghost mode, where clicks pass through to the app underneath.' },
+			'flide.hotkeys.toggleVisibility': { type: 'string', default: 'CommandOrControl+Shift+Space', scope: ConfigurationScope.APPLICATION, description: 'System-wide hotkey to show or hide FLIDE (Electron accelerator syntax).' },
+			'flide.hotkeys.toggleGhost': { type: 'string', default: 'CommandOrControl+Alt+G', scope: ConfigurationScope.APPLICATION, description: 'System-wide hotkey to switch Ghost mode on or off.' }
+		}
+	});
+
 	const registry = Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration);
 
 	// Application

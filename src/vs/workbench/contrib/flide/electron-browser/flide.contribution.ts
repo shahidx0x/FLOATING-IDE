@@ -93,6 +93,18 @@ registerAction2(class extends Action2 {
 registerAction2(class extends Action2 {
 	constructor() {
 		super({
+			id: 'flide.manageExtensions',
+			title: localize2('flide.manageExtensions', 'FLIDE: Manage Extensions'),
+			f1: true,
+			keybinding: { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyX, weight: KeybindingWeight.ExternalExtension + 1 }
+		});
+	}
+	run(): void { FlideBar.current?.extensions.toggleManage(); }
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
 			id: 'flide.runOrStop',
 			title: localize2('flide.runOrStop', 'FLIDE: Run / Stop'),
 			f1: true,

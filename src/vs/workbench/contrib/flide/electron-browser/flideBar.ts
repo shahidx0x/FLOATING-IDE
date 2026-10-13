@@ -17,6 +17,7 @@ import { ipcRenderer } from '../../../../base/parts/sandbox/electron-browser/glo
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
@@ -26,6 +27,7 @@ import { IHistoryService } from '../../../services/history/common/history.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { ILifecycleService, LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
 import { ITerminalInstance, ITerminalService } from '../../terminal/browser/terminal.js';
+import { FlideExtensions, puzzleIcon } from './flideExtensions.js';
 
 /** Default Run commands per file type. {file} = full path, {dir} = folder, {name} = file name without extension. */
 export const FLIDE_DEFAULT_RUN_COMMANDS: Record<string, string> = {
@@ -59,6 +61,7 @@ export class FlideBar extends Disposable {
 	private readonly runIcon: HTMLElement;
 	private readonly runLabel: HTMLElement;
 	private readonly terminalButton: HTMLElement;
+	readonly extensions: FlideExtensions;
 
 	private drawer: HTMLElement | undefined;
 	private dim: HTMLElement | undefined;
@@ -82,6 +85,7 @@ export class FlideBar extends Disposable {
 		@INotificationService private readonly notificationService: INotificationService,
 		@IProductService private readonly productService: IProductService,
 		@ITerminalService private readonly terminalService: ITerminalService,
+		@IInstantiationService instantiationService: IInstantiationService,
 		@ILifecycleService lifecycleService: ILifecycleService,
 	) {
 		super();
@@ -106,6 +110,27 @@ export class FlideBar extends Disposable {
 
 		// Spacer = window drag area
 		append(this.bar, $('.flide-spacer'));
+
+		// 🧩 Extensions, left of Run (blue dot = an update is available)
+		this.extensions = this._register(instantiationService.createInstance(FlideExtensions, this.layoutService.mainContainer));
+		const extensionsButton = append(this.bar, $('button.flide-icon-btn.flide-ext-btn-icon')) as HTMLButtonElement;
+		extensionsButton.type = 'button';
+		extensionsButton.title = 'Extensions (Ctrl+Shift+X)';
+		extensionsButton.setAttribute('aria-label', 'Extensions');
+		extensionsButton.appendChild(puzzleIcon());
+		append(extensionsButton, $('span.flide-dot'));
+		this._register(addDisposableListener(extensionsButton, 'click', e => {
+			e.preventDefault();
+			this.closeMenu();
+			this.extensions.toggleDropdown(extensionsButton);
+		}));
+		const syncExtensionsButton = () => {
+			extensionsButton.classList.toggle('has-update', this.extensions.hasUpdates);
+			extensionsButton.classList.toggle('is-active', this.extensions.isDropdownOpen || this.extensions.isManageOpen);
+			extensionsButton.setAttribute('aria-expanded', String(this.extensions.isDropdownOpen));
+		};
+		this._register(this.extensions.onDidChange(syncExtensionsButton));
+		syncExtensionsButton();
 
 		// Run / Stop (one button)
 		this.runButton = append(this.bar, $('button.flide-run'));

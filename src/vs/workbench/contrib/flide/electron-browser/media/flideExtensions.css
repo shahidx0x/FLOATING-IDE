@@ -1,0 +1,138 @@
+/*---------------------------------------------------------------------------------------------
+ *  FLIDE — 🧩 extensions dropdown and Manage extensions view (Midnight).
+ *--------------------------------------------------------------------------------------------*/
+
+/* 🧩 icon in the bar: blue dot = an update is available */
+.flide-bar .flide-ext-btn-icon svg { display: block; }
+.flide-bar .flide-icon-btn.has-update .flide-dot { display: block; background: var(--flide-accent); }
+
+/* ---- Dropdown ---- */
+.monaco-workbench .flide-ext-catcher { position: absolute; inset: 0; z-index: 2600; }
+.monaco-workbench .flide-ext-drop {
+	position: absolute;
+	width: 360px;
+	max-width: calc(100% - 16px);
+	z-index: 2601;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	background: #191C22;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	border-radius: 12px;
+	box-shadow: 0 22px 50px rgba(0, 0, 0, 0.55);
+	font-family: var(--flide-ui-font);
+	font-size: 13px;
+	color: #E6E8EE;
+	animation: flide-pop .14s cubic-bezier(.2, .8, .2, 1);
+}
+@keyframes flide-pop { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }
+
+.flide-ext-head { padding: 12px 12px 10px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.07); }
+.flide-ext-titlerow { display: flex; align-items: center; gap: 8px; }
+.flide-ext-title { flex: 1; font-size: 13.5px; font-weight: 600; }
+
+.flide-seg { display: flex; gap: 2px; padding: 2px; background: #111318; border-radius: 7px; font-size: 12px; }
+.flide-seg button { border: none; border-radius: 5px; padding: 5px 10px; background: transparent; color: #9AA1AE; font: inherit; cursor: pointer; white-space: nowrap; }
+.flide-seg button:hover { color: #E6E8EE; }
+.flide-seg button.is-on { background: #2A2F3A; color: #E6E8EE; }
+
+.flide-ext-search { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 7px; background: #111318; color: #7C8493; border: 1px solid transparent; }
+.flide-ext-search:focus-within { border-color: rgba(122, 162, 255, 0.5); }
+.flide-ext-search .codicon { font-size: 13px; }
+.flide-ext-search input { flex: 1; min-width: 0; border: none; background: transparent; color: #E6E8EE; font: inherit; font-size: 13px; outline: none; }
+.flide-ext-search input::placeholder { color: #7C8493; }
+
+.flide-ext-list { padding: 6px; display: flex; flex-direction: column; gap: 2px; max-height: 330px; overflow-y: auto; }
+.flide-ext-row { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 8px; border-radius: 8px; }
+.flide-ext-row:hover { background: #1F232C; }
+.flide-ext-row.is-off > .flide-ext-tile,
+.flide-ext-row.is-off > .flide-ext-info { opacity: .5; }
+
+.flide-ext-tile {
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	overflow: hidden;
+	background: #2A2F3A;
+	color: #F2F4F8;
+	font-weight: 600;
+	user-select: none;
+}
+.flide-ext-tile img { width: 100%; height: 100%; object-fit: contain; }
+
+.flide-ext-info { flex: 1; min-width: 0; padding: 0; border: none; background: transparent; text-align: left; display: flex; flex-direction: column; gap: 2px; cursor: pointer; font: inherit; color: inherit; }
+.flide-ext-info.is-static { cursor: default; }
+.flide-ext-name { color: #E6E8EE; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button.flide-ext-info:hover .flide-ext-name { color: var(--flide-accent); }
+.flide-ext-meta { color: #7C8493; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.flide-ext-btn { height: 24px; padding: 0 9px; flex-shrink: 0; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.14); background: transparent; color: #C9CDD6; font: inherit; font-size: 11.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.flide-ext-btn:hover { background: #2A2F3A; }
+.flide-ext-btn.is-accent { border-color: var(--flide-accent); color: var(--flide-accent); }
+.flide-ext-btn.is-accent:hover { background: rgba(122, 162, 255, 0.12); }
+.flide-ext-btn:disabled { opacity: .6; cursor: default; }
+.flide-ext-badge { flex-shrink: 0; font-size: 11.5px; color: #7C8493; }
+
+.flide-switch { width: 34px; height: 20px; flex-shrink: 0; padding: 2px; border: none; border-radius: 10px; background: #3A4050; display: flex; justify-content: flex-start; cursor: pointer; transition: background-color .15s ease; }
+.flide-switch.is-on { background: #3F63C9; justify-content: flex-end; }
+.flide-switch:disabled { opacity: .6; cursor: default; }
+.flide-switch-knob { width: 16px; height: 16px; border-radius: 50%; background: #F2F4F8; }
+
+.flide-ext-empty { padding: 22px 12px; text-align: center; color: #7C8493; font-size: 12.5px; line-height: 1.6; white-space: pre-line; }
+
+.flide-ext-foot { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border: none; border-top: 1px solid rgba(255, 255, 255, 0.07); background: transparent; color: #C9CDD6; font: inherit; text-align: left; cursor: pointer; }
+.flide-ext-foot:hover { background: #1F232C; color: #E6E8EE; }
+.flide-ext-foot .codicon { font-size: 14px; color: #7C8493; }
+.flide-ext-foot-label { flex: 1; }
+
+/* ---- Manage extensions (over the editor) ---- */
+.monaco-workbench .flide-ext-manage {
+	position: absolute;
+	left: 0; right: 0; top: 46px; bottom: 0;
+	z-index: 2400;
+	display: flex;
+	flex-direction: column;
+	background: #14161B;
+	font-family: var(--flide-ui-font);
+	font-size: 13px;
+	color: #E6E8EE;
+	animation: flide-fade .12s ease-out;
+}
+.flide-ext-mhead { height: 44px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 10px 0 6px; border-bottom: 1px solid rgba(255, 255, 255, 0.07); }
+.flide-ext-mhead .flide-icon-btn { width: 32px; height: 32px; border: none; border-radius: 6px; background: transparent; color: #9AA1AE; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.flide-ext-mhead .flide-icon-btn:hover { background: #1B1E25; color: #E6E8EE; }
+.flide-ext-mtitle { flex: 1; font-size: 14px; font-weight: 600; }
+
+.flide-ext-mbody { flex: 1; min-height: 0; display: flex; }
+.flide-ext-mlist { width: 240px; flex-shrink: 0; padding: 8px 6px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; background: #111318; border-right: 1px solid rgba(255, 255, 255, 0.07); }
+.flide-ext-mrow { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 8px; border: none; border-radius: 8px; background: transparent; color: #E6E8EE; font: inherit; text-align: left; cursor: pointer; }
+.flide-ext-mrow:hover { background: #1B1E25; }
+.flide-ext-mrow.is-selected { background: #1F232C; }
+.flide-ext-mrow-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.flide-ext-status { font-size: 11.5px; color: #7C8493; }
+.flide-ext-status.is-on { color: #9FD8A4; }
+.flide-ext-status.is-update { color: var(--flide-accent); }
+
+.flide-ext-detail { flex: 1; min-width: 0; overflow-y: auto; padding: 22px 26px 28px; display: flex; flex-direction: column; gap: 12px; }
+.flide-ext-dtop { display: flex; align-items: center; gap: 14px; }
+.flide-ext-dtitle { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.flide-ext-dtitle h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.flide-ext-desc { margin: 0; max-width: 640px; color: #C9CDD6; line-height: 1.55; }
+.flide-ext-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0 6px; }
+.flide-ext-bigbtn { height: 32px; padding: 0 14px; border-radius: 7px; border: 1px solid transparent; font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.flide-ext-bigbtn.primary { background: var(--flide-accent); color: #0E1014; }
+.flide-ext-bigbtn.primary:hover { background: var(--flide-accent-hover); }
+.flide-ext-bigbtn.secondary { background: #2A2F3A; color: #E6E8EE; }
+.flide-ext-bigbtn.secondary:hover { background: #343A47; }
+.flide-ext-bigbtn.danger { background: transparent; color: #FF8A8A; border-color: rgba(255, 107, 107, 0.35); }
+.flide-ext-bigbtn.danger:hover { background: rgba(255, 107, 107, 0.1); }
+.flide-ext-bigbtn:disabled { opacity: .6; cursor: default; }
+
+.flide-ext-detail .flide-section { padding: 14px 0 2px; }
+.flide-ext-setting { max-width: 640px; min-height: 48px; display: flex; align-items: center; gap: 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
+.flide-ext-setting-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.flide-ext-setting-name { font-size: 13px; }
+.flide-ext-setting-desc { font-size: 12px; color: #9AA1AE; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.flide-ext-adds { margin: 0; max-width: 640px; color: #C9CDD6; line-height: 1.55; }
+.flide-ext-link { align-self: flex-start; padding: 6px 0; border: none; background: transparent; color: var(--flide-accent); font: inherit; font-size: 12.5px; cursor: pointer; }

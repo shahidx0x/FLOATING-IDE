@@ -43,6 +43,8 @@ export const FLIDE_DEFAULT_RUN_COMMANDS: Record<string, string> = {
 	'.java': 'java "{file}"',
 };
 
+const PINNED_WIDTH = 280;
+
 const HIDDEN_ENTRIES = new Set(['.git', 'node_modules', '__pycache__', '.venv', 'venv', '.DS_Store', '.idea', '.vs']);
 
 export class FlideBar extends Disposable {
@@ -63,6 +65,7 @@ export class FlideBar extends Disposable {
 	private readonly menuListeners = this._register(new DisposableStore());
 	private readonly drawerContent = this._register(new DisposableStore());
 	private readonly expandedFolders = new Set<string>();
+	private pinned = false;
 
 	private runInstance: ITerminalInstance | undefined;
 	private running = false;
@@ -89,7 +92,7 @@ export class FlideBar extends Disposable {
 		this.bar = append(container, $('.flide-bar'));
 
 		// ☰ Menu
-		this.menuButton = this.iconButton(this.bar, Codicon.menu, 'Menu (Ctrl+B)', () => this.toggleMenu());
+		this.menuButton = this.iconButton(this.bar, Codicon.menu, 'Menu · Ctrl+B keeps it open', () => this.toggleMenu());
 		this.menuButton.classList.add('flide-menu-btn');
 
 		// File name + project (also opens the menu)
@@ -121,7 +124,17 @@ export class FlideBar extends Disposable {
 
 		this._register(this.editorService.onDidActiveEditorChange(() => this.updateTitle()));
 		this._register(this.contextService.onDidChangeWorkspaceFolders(() => this.updateTitle()));
-		this._register(this.layoutService.onDidChangePartVisibility(() => this.updateTerminalButton()));
+		this._register(this.layoutService.onDidChangePartVisibility(() => {
+			this.updateTerminalButton();
+			if (this.pinned && !this.layoutService.isVisible(Parts.SIDEBAR_PART)) {
+				this.unpin(); // side bar was closed some other way
+			}
+		}));
+		this._register(this.editorService.onDidActiveEditorChange(() => {
+			if (this.pinned) {
+				this.renderDrawer(); // keep the active-file highlight current
+			}
+		}));
 
 		this.updateTitle();
 		this.setRunning(false);
@@ -163,25 +176,79 @@ export class FlideBar extends Disposable {
 
 	//#region Menu drawer
 
+	/** ☰ button / file name: a quick look that closes again on pick, Esc or a click outside. */
 	toggleMenu(): void {
-		if (this.drawer) {
+		if (this.pinned) {
+			this.unpin();
+		} else if (this.drawer) {
 			this.closeMenu();
 		} else {
 			this.openMenu();
 		}
 	}
 
+	/** Ctrl+B: lock the menu open beside the editor until Ctrl+B is pressed again. */
+	togglePinned(): void {
+		if (this.pinned) {
+			this.unpin();
+		} else {
+			this.pin();
+		}
+	}
+
+	private pin(): void {
+		this.closeMenu();
+		this.pinned = true;
+		// Reserve real space on the left, so the editor moves over instead of being covered
+		this.layoutService.setPartHidden(false, Parts.SIDEBAR_PART);
+		try {
+			const size = this.layoutService.getSize(Parts.SIDEBAR_PART);
+			this.layoutService.setSize(Parts.SIDEBAR_PART, { width: PINNED_WIDTH, height: size.height });
+		} catch {
+			// keep the current width
+		}
+		this.openMenu();
+	}
+
+	private unpin(): void {
+		this.pinned = false;
+		this.closeMenu();
+		if (this.layoutService.isVisible(Parts.SIDEBAR_PART)) {
+			this.layoutService.setPartHidden(true, Parts.SIDEBAR_PART);
+		}
+	}
+
 	private openMenu(): void {
 		const host = this.layoutService.mainContainer;
-		this.dim = append(host, $('.flide-dim'));
 		this.drawer = append(host, $('.flide-drawer'));
-		this.menuListeners.add(addDisposableListener(this.dim, 'click', () => this.closeMenu()));
-		this.menuListeners.add(addDisposableListener(getWindow(host).document, 'keydown', (e: KeyboardEvent) => {
-			if (e.key === 'Escape') {
-				this.closeMenu();
-			}
-		}));
 		this.menuButton.classList.add('is-active');
+		this.menuButton.classList.toggle('is-pinned', this.pinned);
+
+		if (this.pinned) {
+			// Sit exactly on the reserved side bar area and follow its size (also when dragging its edge)
+			const drawer = this.drawer;
+			drawer.classList.add('is-pinned');
+			const sidebar = host.querySelector<HTMLElement>('.part.sidebar');
+			if (sidebar) {
+				const sync = () => {
+					const left = sidebar.getBoundingClientRect().left - host.getBoundingClientRect().left;
+					drawer.style.left = `${Math.round(left)}px`;
+					drawer.style.width = `${sidebar.offsetWidth}px`;
+				};
+				sync();
+				const observer = new ResizeObserver(sync);
+				observer.observe(sidebar);
+				this.menuListeners.add(toDisposable(() => observer.disconnect()));
+			}
+		} else {
+			this.dim = append(host, $('.flide-dim'));
+			this.menuListeners.add(addDisposableListener(this.dim, 'click', () => this.closeMenu()));
+			this.menuListeners.add(addDisposableListener(getWindow(host).document, 'keydown', (e: KeyboardEvent) => {
+				if (e.key === 'Escape') {
+					this.closeMenu();
+				}
+			}));
+		}
 		this.renderDrawer();
 	}
 
@@ -192,7 +259,7 @@ export class FlideBar extends Disposable {
 		this.dim?.remove();
 		this.drawer = undefined;
 		this.dim = undefined;
-		this.menuButton.classList.remove('is-active');
+		this.menuButton.classList.remove('is-active', 'is-pinned');
 	}
 
 	private renderDrawer(): void {
@@ -206,14 +273,20 @@ export class FlideBar extends Disposable {
 
 		// Header: back arrow + Go to file
 		const head = append(drawer, $('.flide-drawer-head'));
-		this.iconButtonIn(head, Codicon.chevronLeft, 'Close menu', () => this.closeMenu());
+		if (this.pinned) {
+			this.iconButtonIn(head, Codicon.pinned, 'Unpin menu (Ctrl+B)', () => this.unpin());
+		} else {
+			this.iconButtonIn(head, Codicon.chevronLeft, 'Close menu', () => this.closeMenu());
+		}
 		const search = append(head, $('button.flide-search')) as HTMLButtonElement;
 		search.type = 'button';
 		append(search, renderIcon(Codicon.search));
 		append(search, $('span')).textContent = 'Go to file';
 		append(search, $('span.flide-kbd')).textContent = 'Ctrl+P';
 		this.drawerContent.add(addDisposableListener(search, 'click', () => {
-			this.closeMenu();
+			if (!this.pinned) {
+				this.closeMenu();
+			}
 			this.commandService.executeCommand('workbench.action.quickOpen');
 		}));
 
@@ -325,12 +398,18 @@ export class FlideBar extends Disposable {
 	}
 
 	private openFile(uri: URI): void {
-		this.closeMenu();
+		if (!this.pinned) {
+			this.closeMenu();
+		}
 		this.editorService.openEditor({ resource: uri, options: { pinned: true } });
 	}
 
 	private runCommand(id: string): void {
-		this.closeMenu();
+		if (this.pinned && id === 'workbench.action.findInFiles') {
+			this.unpin(); // search uses the side bar itself
+		} else if (!this.pinned) {
+			this.closeMenu();
+		}
 		this.commandService.executeCommand(id);
 	}
 
@@ -415,7 +494,9 @@ export class FlideBar extends Disposable {
 	}
 
 	private async showTerminal(): Promise<void> {
-		this.closeMenu();
+		if (!this.pinned) {
+			this.closeMenu();
+		}
 		await this.terminalService.revealActiveTerminal();
 		// The sheet covers most of the editor (design: 88%)
 		const share = Math.min(100, Math.max(40, this.configurationService.getValue<number>('flide.terminal.width') ?? 88)) / 100;

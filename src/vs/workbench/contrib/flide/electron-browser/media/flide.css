@@ -183,3 +183,23 @@
 .monaco-workbench .part.panel .terminal-wrapper {
 	padding-left: 6px;
 }
+
+/* ---- Pinned menu (Ctrl+B): docked beside the editor, no dim ---- */
+.monaco-workbench .flide-drawer.is-pinned {
+	z-index: 30;
+	max-width: none;
+	box-shadow: none;
+	animation: none;
+	border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+.flide-bar .flide-menu-btn.is-pinned::after {
+	content: '';
+	position: absolute;
+	left: 50%;
+	bottom: 3px;
+	width: 14px;
+	height: 2px;
+	margin-left: -7px;
+	border-radius: 1px;
+	background: var(--flide-accent);
+}

@@ -79,12 +79,12 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: 'flide.toggleMenu',
-			title: localize2('flide.toggleMenu', 'FLIDE: Toggle Menu'),
+			title: localize2('flide.toggleMenu', 'FLIDE: Keep Menu Open (pin / unpin)'),
 			f1: true,
 			keybinding: { primary: KeyMod.CtrlCmd | KeyCode.KeyB, weight: KeybindingWeight.ExternalExtension + 1 }
 		});
 	}
-	run(): void { FlideBar.current?.toggleMenu(); }
+	run(): void { FlideBar.current?.togglePinned(); }
 });
 
 registerAction2(class extends Action2 {

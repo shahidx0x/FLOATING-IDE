@@ -45,6 +45,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Put signtool on PATH (Windows SDK)
+        shell: pwsh
+        run: |
+          $st = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.DirectoryName -like '*\x64' } | Sort-Object FullName -Descending | Select-Object -First 1
+          if ($st) {
+            $st.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+            "signtool: $($st.FullName)"
+          } else {
+            'signtool not found; the build will skip signature stripping'
+          }
+
       - name: Build FLIDE (x64, minified)
         run: npm run gulp vscode-win32-x64-min
 

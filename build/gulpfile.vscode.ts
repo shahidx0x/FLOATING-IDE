@@ -460,10 +460,23 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 	return task;
 }
 
+let flideSigntoolMissingWarned = false;
+
 function hasAuthenticodeSignature(filePath: string): Promise<boolean> {
 	return new Promise((resolve, reject) => {
 		const proc = cp.spawn('signtool.exe', ['verify', '/pa', filePath]);
-		proc.on('error', reject);
+		proc.on('error', (err: NodeJS.ErrnoException) => {
+			// FLIDE: builds are not signed, so without signtool there is nothing to strip.
+			if (err.code === 'ENOENT') {
+				if (!flideSigntoolMissingWarned) {
+					flideSigntoolMissingWarned = true;
+					console.warn('[FLIDE] signtool.exe not found, skipping Authenticode signature stripping.');
+				}
+				resolve(false);
+				return;
+			}
+			reject(err);
+		});
 		proc.on('exit', code => resolve(code === 0));
 	});
 }

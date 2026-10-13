@@ -36,6 +36,7 @@ function clamp(value: number, min: number, max: number): number {
 export class FlideFloatingWindow extends Disposable {
 
 	private ghost = false;
+	private onTop = true;
 
 	constructor(
 		private readonly win: electron.BrowserWindow,
@@ -64,6 +65,10 @@ export class FlideFloatingWindow extends Disposable {
 		return this.win;
 	}
 
+	get keepOnTop(): boolean {
+		return this.onTop;
+	}
+
 	private setting<T>(key: string, fallback: T): T {
 		const value = this.configurationService.getValue<T>(key);
 		return value === undefined || value === null ? fallback : value;
@@ -76,6 +81,8 @@ export class FlideFloatingWindow extends Disposable {
 
 		// 'screen-saver' is the highest z-level: stays above normal and borderless-fullscreen apps
 		const onTop = this.setting<boolean>(FlideSettings.alwaysOnTop, DEFAULTS.alwaysOnTop);
+		this.onTop = onTop;
+		FlideTopmostGuard.start();
 		this.win.setAlwaysOnTop(onTop, 'screen-saver');
 		this.win.setVisibleOnAllWorkspaces(onTop, { visibleOnFullScreen: true });
 
@@ -193,6 +200,10 @@ body.running .dot{display:block}
 		return !!bubble && !bubble.isDestroyed();
 	}
 
+	export function window(): electron.BrowserWindow | undefined {
+		return bubble && !bubble.isDestroyed() ? bubble : undefined;
+	}
+
 	export function toggle(windows: electron.BrowserWindow[]): void {
 		if (isActive()) {
 			restore();
@@ -260,5 +271,49 @@ body.running .dot{display:block}
 		if (bubble && !bubble.isDestroyed()) {
 			bubble.webContents.executeJavaScript(`document.body.classList.toggle('running', ${value ? 'true' : 'false'})`).catch(() => undefined);
 		}
+	}
+}
+
+/**
+ * Keeps FLIDE above other always-on-top windows such as games in (windowed) fullscreen.
+ * A game that gets focus moves itself to the top of the topmost band; every 500 ms we move
+ * FLIDE back above it. moveTop() changes only the z-order: it never takes focus or input
+ * away from the game, and nothing is injected into other processes.
+ */
+namespace FlideTopmostGuard {
+
+	let timer: ReturnType<typeof setInterval> | undefined;
+
+	function raise(win: electron.BrowserWindow): void {
+		if (win.isDestroyed() || !win.isVisible() || win.isMinimized() || win.isFocused()) {
+			return;
+		}
+		if (!win.isAlwaysOnTop()) {
+			win.setAlwaysOnTop(true, 'screen-saver');
+		}
+		win.moveTop();
+	}
+
+	export function start(): void {
+		if (timer) {
+			return;
+		}
+		timer = setInterval(() => {
+			const bubble = FlideBubble.window();
+			if (bubble) {
+				raise(bubble);
+			}
+			for (const instance of instances) {
+				if (instance.keepOnTop) {
+					raise(instance.window);
+				}
+			}
+		}, 500);
+		electron.app.on('will-quit', () => {
+			if (timer) {
+				clearInterval(timer);
+				timer = undefined;
+			}
+		});
 	}
 }

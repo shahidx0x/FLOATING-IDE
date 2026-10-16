@@ -39,7 +39,7 @@ import { IFileService } from '../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
-import { EditorResourceAccessor, SideBySideEditor } from '../../../common/editor.js';
+import { EditorResourceAccessor, EditorsOrder, SideBySideEditor } from '../../../common/editor.js';
 import { IEditorService, SIDE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { ILifecycleService, LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
@@ -88,6 +88,10 @@ export class FlideBar extends Disposable {
 	private readonly runIcon: HTMLElement;
 	private readonly runLabel: HTMLElement;
 	private readonly terminalButton: HTMLElement;
+	private readonly codeTab: HTMLButtonElement;
+	private readonly designTab: HTMLButtonElement;
+	/** Reported by the FLIDE Design extension: is a design active, can it run (DevOps page), is its stack running. */
+	private designState = { active: false, runnable: false, running: false };
 	readonly extensions: FlideExtensions;
 
 	private drawer: HTMLElement | undefined;
@@ -168,6 +172,13 @@ export class FlideBar extends Disposable {
 		append(fileButton, renderIcon(Codicon.chevronDown)).classList.add('flide-chevron');
 		this._register(addDisposableListener(fileButton, 'click', () => this.toggleMenu()));
 
+		// Code | Design
+		const modeSwitch = append(this.bar, $('.flide-mode-switch'));
+		modeSwitch.setAttribute('role', 'tablist');
+		modeSwitch.setAttribute('aria-label', 'Code or Design');
+		this.codeTab = this.modeTab(modeSwitch, 'Code', 'Code (Ctrl+Shift+D)', () => this.showCode());
+		this.designTab = this.modeTab(modeSwitch, 'Design', 'Design — Sketch, Architecture, DevOps playground (Ctrl+Shift+D)', () => this.showDesign());
+
 		// Spacer = window drag area
 		append(this.bar, $('.flide-spacer'));
 
@@ -207,7 +218,7 @@ export class FlideBar extends Disposable {
 		this.iconButton(this.bar, Codicon.circleLargeOutline, 'Shrink to bubble (Ctrl+Shift+M)', () => ipcRenderer.send('vscode:flide-bubble'));
 		this.iconButton(this.bar, Codicon.close, 'Hide FLIDE (Ctrl+Shift+Space)', () => ipcRenderer.send('vscode:flide-hide'));
 
-		this._register(this.editorService.onDidActiveEditorChange(() => this.updateTitle()));
+		this._register(this.editorService.onDidActiveEditorChange(() => { this.updateTitle(); this.updateModeSwitch(); }));
 		this._register(this.contextService.onDidChangeWorkspaceFolders(() => this.updateTitle()));
 		this._register(this.layoutService.onDidChangePartVisibility(() => {
 			this.updateTerminalButton();
@@ -227,11 +238,102 @@ export class FlideBar extends Disposable {
 		}));
 
 		this.updateTitle();
+		this.updateModeSwitch();
 		this.setRunning(false);
 		this.updateTerminalButton();
 
 		lifecycleService.when(LifecyclePhase.Restored).then(() => this.tidyLayout());
 	}
+
+	private modeTab(parent: HTMLElement, text: string, title: string, onClick: () => void): HTMLButtonElement {
+		const button = append(parent, $('button.flide-mode-tab')) as HTMLButtonElement;
+		button.type = 'button';
+		button.textContent = text;
+		button.title = title;
+		button.setAttribute('role', 'tab');
+		this._register(addDisposableListener(button, 'click', e => { e.preventDefault(); onClick(); }));
+		return button;
+	}
+
+	//#region Code | Design
+
+	/** A design is a *.flow file; it opens in the FLIDE Design canvas. */
+	private isDesignActive(): boolean {
+		const uri = EditorResourceAccessor.getOriginalUri(this.editorService.activeEditor, { supportSideBySide: SideBySideEditor.PRIMARY });
+		return !!uri && /\.flow$/i.test(uri.path);
+	}
+
+	private updateModeSwitch(): void {
+		const design = this.isDesignActive();
+		this.codeTab.classList.toggle('is-on', !design);
+		this.designTab.classList.toggle('is-on', design);
+		this.codeTab.setAttribute('aria-selected', String(!design));
+		this.designTab.setAttribute('aria-selected', String(design));
+		this.bar.classList.toggle('is-design', design);
+		this.syncRunButton();
+	}
+
+	/** Design: the open design, else the last one, else design.flow in the folder (created if missing). */
+	async showDesign(): Promise<void> {
+		if (this.isDesignActive()) {
+			return;
+		}
+		if (!this.pinned) {
+			this.closeMenu();
+		}
+		await this.commandService.executeCommand('flide.design.open');
+	}
+
+	/** Code: back to the most recent file that isn't a design. */
+	async showCode(): Promise<void> {
+		if (!this.isDesignActive()) {
+			return;
+		}
+		for (const { editor, groupId } of this.editorService.getEditors(EditorsOrder.MOST_RECENTLY_ACTIVE)) {
+			const uri = EditorResourceAccessor.getOriginalUri(editor, { supportSideBySide: SideBySideEditor.PRIMARY });
+			if (uri && /\.flow$/i.test(uri.path)) {
+				continue;
+			}
+			await this.editorService.openEditor(editor, { pinned: true }, groupId);
+			return;
+		}
+		// No code file open yet: open the menu to pick one
+		if (!this.drawer) {
+			this.openMenu();
+		}
+	}
+
+	toggleDesign(): void {
+		if (this.isDesignActive()) {
+			this.showCode();
+		} else {
+			this.showDesign();
+		}
+	}
+
+	setDesignState(state: { active?: boolean; runnable?: boolean; running?: boolean } | undefined): void {
+		this.designState = { active: !!state?.active, runnable: !!state?.runnable, running: !!state?.running };
+		this.setRunning(this.running);
+	}
+
+	/** In a design, Run belongs to the DevOps playground: shown only there, and it starts / stops the stack. */
+	private syncRunButton(): void {
+		if (!this.runButton) {
+			return;
+		}
+		const design = this.isDesignActive();
+		const running = design ? this.designState.running : this.running;
+		this.runButton.style.display = design && !(this.designState.active && this.designState.runnable) ? 'none' : '';
+		this.runButton.classList.toggle('is-running', running);
+		clearNode(this.runIcon);
+		append(this.runIcon, renderIcon(running ? Codicon.debugStop : Codicon.debugStart));
+		this.runLabel.textContent = running ? 'Stop' : 'Run';
+		this.runButton.title = design
+			? (running ? 'Stop the stack (F5)' : 'Run the stack in Docker (F5)')
+			: (running ? 'Stop (F5)' : 'Run (F5)');
+	}
+
+	//#endregion
 
 	private iconButton(parent: HTMLElement, icon: ThemeIcon, label: string, onClick: () => void): HTMLElement {
 		const button = append(parent, $('button.flide-icon-btn')) as HTMLButtonElement;
@@ -1237,6 +1339,10 @@ export class FlideBar extends Disposable {
 	//#region Run / Stop + terminal sheet
 
 	async runOrStop(): Promise<void> {
+		if (this.isDesignActive()) {
+			await this.commandService.executeCommand('flide.design.run');
+			return;
+		}
 		if (this.running && this.runInstance) {
 			this.runInstance.dispose(); // Stop
 			return;
@@ -1329,13 +1435,10 @@ export class FlideBar extends Disposable {
 
 	private setRunning(running: boolean): void {
 		this.running = running;
-		this.runButton.classList.toggle('is-running', running);
-		clearNode(this.runIcon);
-		append(this.runIcon, renderIcon(running ? Codicon.debugStop : Codicon.debugStart));
-		this.runLabel.textContent = running ? 'Stop' : 'Run';
-		this.runButton.title = running ? 'Stop (F5)' : 'Run (F5)';
-		this.terminalButton.classList.toggle('has-dot', running);
-		ipcRenderer.send('vscode:flide-running', running);
+		const anything = running || this.designState.running;
+		this.syncRunButton();
+		this.terminalButton.classList.toggle('has-dot', anything);
+		ipcRenderer.send('vscode:flide-running', anything);
 	}
 
 	//#endregion

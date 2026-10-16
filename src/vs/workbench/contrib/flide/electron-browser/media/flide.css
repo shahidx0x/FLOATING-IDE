@@ -310,3 +310,28 @@
 	font-size: 12.5px;
 }
 .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab .tab-label { padding-left: 4px; }
+
+/* ---- Code | Design ---- */
+.flide-mode-switch {
+	-webkit-app-region: no-drag;
+	display: flex;
+	flex-shrink: 0;
+	gap: 2px;
+	padding: 3px;
+	margin-left: 2px;
+	background: #1B1E25;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: 9px;
+}
+.flide-bar .flide-mode-switch .flide-mode-tab {
+	height: 26px;
+	padding: 0 11px;
+	border-radius: 6px;
+	font-size: 12.5px;
+	color: #9AA1AE;
+	white-space: nowrap;
+}
+.flide-bar .flide-mode-switch .flide-mode-tab:hover { background: #23272F; color: #E6E8EE; }
+.flide-bar .flide-mode-switch .flide-mode-tab.is-on { background: #2A2F3A; color: #E6E8EE; }
+.flide-bar .flide-mode-switch .flide-mode-tab.is-on:hover { background: #2A2F3A; }
+.flide-bar.is-design .flide-chevron { display: none; }

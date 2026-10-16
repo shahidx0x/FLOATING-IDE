@@ -1,0 +1,39 @@
+{
+	"name": "flide-design",
+	"displayName": "FLIDE Design",
+	"description": "Design mode for FLIDE: Sketch, Architecture and DevOps playground canvases saved as .flow files",
+	"version": "1.0.0",
+	"publisher": "vscode",
+	"license": "MIT",
+	"engines": { "vscode": "^1.90.0" },
+	"categories": ["Visualization", "Other"],
+	"main": "./extension.js",
+	"activationEvents": [
+		"onCustomEditor:flide.design",
+		"onCommand:flide.design.open",
+		"onCommand:flide.design.new",
+		"onCommand:flide.design.run",
+		"onStartupFinished"
+	],
+	"capabilities": {
+		"untrustedWorkspaces": { "supported": "limited", "description": "Running a DevOps stack needs a trusted folder." }
+	},
+	"contributes": {
+		"customEditors": [
+			{
+				"viewType": "flide.design",
+				"displayName": "FLIDE Design",
+				"selector": [ { "filenamePattern": "*.flow" } ],
+				"priority": "default"
+			}
+		],
+		"languages": [
+			{ "id": "json", "extensions": [".flow"] }
+		],
+		"commands": [
+			{ "command": "flide.design.open", "title": "Open Design", "category": "FLIDE" },
+			{ "command": "flide.design.new", "title": "New Design File", "category": "FLIDE" },
+			{ "command": "flide.design.run", "title": "Run / Stop DevOps Stack", "category": "FLIDE" }
+		]
+	}
+}

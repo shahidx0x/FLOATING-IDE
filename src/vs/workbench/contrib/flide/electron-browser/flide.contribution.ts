@@ -5,6 +5,7 @@
 import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
 import { localize2 } from '../../../../nls.js';
 import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
+import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { ConfigurationScope, Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
@@ -130,6 +131,23 @@ registerAction2(class extends Action2 {
 		});
 	}
 	run(): void { FlideBar.current?.openSearch('files'); }
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'flide.toggleDesign',
+			title: localize2('flide.toggleDesign', 'FLIDE: Switch Code / Design'),
+			f1: true,
+			keybinding: { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyD, weight: KeybindingWeight.ExternalExtension + 1 }
+		});
+	}
+	run(): void { FlideBar.current?.toggleDesign(); }
+});
+
+// 5) The FLIDE Design extension reports whether the active design can run and whether its stack runs
+CommandsRegistry.registerCommand('flide.bar.designState', (_accessor, state: { active?: boolean; runnable?: boolean; running?: boolean } | undefined) => {
+	FlideBar.current?.setDesignState(state);
 });
 
 registerAction2(class extends Action2 {

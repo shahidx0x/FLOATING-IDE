@@ -331,7 +331,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration)
 			[VerifyExtensionSignatureConfigKey]: {
 				type: 'boolean',
 				description: localize('extensions.verifySignature', "When enabled, extensions are verified to be signed before getting installed."),
-				default: true,
+				default: false, // FLIDE: no vsce-sign in our builds, so verification can never run (same default as VSCodium)
 				scope: ConfigurationScope.APPLICATION,
 				included: isNative
 			},
